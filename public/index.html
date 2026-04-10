@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Алтын | Админ-панель</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0F0A0C;
+      --bg-secondary: #1A1215;
+      --bg-card: #221920;
+      --bg-card-hover: #2A2025;
+      --border: #3A2530;
+      --border-light: #4A3540;
+      --gold: #D4A853;
+      --gold-light: #E8C97A;
+      --gold-dark: #B08930;
+      --rose: #D4A0A0;
+      --rose-dark: #A07070;
+      --burgundy: #6B1D3A;
+      --burgundy-light: #8B2D4A;
+      --text-primary: #F5EDE8;
+      --text-secondary: #A09090;
+      --text-muted: #706060;
+      --success: #4ADE80;
+      --warning: #FBBF24;
+      --danger: #F87171;
+      --info: #60A5FA;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    /* ==================== LOGIN ==================== */
+    .login-screen {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: radial-gradient(ellipse at top, #1A1215 0%, #0F0A0C 70%);
+    }
+
+    .login-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 48px;
+      width: 400px;
+      text-align: center;
+    }
+
+    .login-box h1 {
+      font-family: 'Playfair Display', serif;
+      color: var(--gold);
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+
+    .login-box p {
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+      font-size: 14px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+      text-align: left;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%;
+      padding: 12px 16px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+      outline: none;
+      border-color: var(--gold);
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+      color: #0F0A0C;
+      width: 100%;
+    }
+
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(212, 168, 83, 0.3); }
+
+    .btn-secondary {
+      background: var(--bg-card);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover { border-color: var(--gold); }
+
+    .btn-danger {
+      background: rgba(248, 113, 113, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+    }
+
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+
+    /* ==================== LAYOUT ==================== */
+    .app { display: flex; min-height: 100vh; }
+
+    .sidebar {
+      width: 260px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 100;
+    }
+
+    .sidebar-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-header h2 {
+      font-family: 'Playfair Display', serif;
+      color: var(--gold);
+      font-size: 22px;
+    }
+
+    .sidebar-header span {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      padding: 16px 12px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
+    .nav-item.active { background: rgba(212, 168, 83, 0.1); color: var(--gold); border: 1px solid rgba(212, 168, 83, 0.2); }
+    .nav-item .icon { font-size: 18px; width: 24px; text-align: center; }
+
+    .sidebar-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .main {
+      flex: 1;
+      margin-left: 260px;
+      padding: 32px;
+    }
+
+    .page-header {
+      margin-bottom: 32px;
+    }
+
+    .page-header h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: 28px;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .page-header p {
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    /* ==================== CARDS ==================== */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      transition: border-color 0.2s;
+    }
+
+    .stat-card:hover { border-color: var(--border-light); }
+
+    .stat-card .label {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .stat-card .value {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--gold);
+      line-height: 1;
+    }
+
+    .stat-card .change {
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .stat-card .change.up { color: var(--success); }
+    .stat-card .change.down { color: var(--danger); }
+
+    /* ==================== TABLE ==================== */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-header h3 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .card-body { padding: 24px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th {
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    td {
+      padding: 12px 16px;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(58, 37, 48, 0.5);
+      color: var(--text-secondary);
+    }
+
+    tr:hover td { background: var(--bg-card-hover); }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-gold { background: rgba(212, 168, 83, 0.15); color: var(--gold); }
+    .badge-success { background: rgba(74, 222, 128, 0.15); color: var(--success); }
+    .badge-warning { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+    .badge-danger { background: rgba(248, 113, 113, 0.15); color: var(--danger); }
+    .badge-info { background: rgba(96, 165, 250, 0.15); color: var(--info); }
+    .badge-muted { background: rgba(112, 96, 96, 0.15); color: var(--text-muted); }
+
+    /* ==================== FUNNEL ==================== */
+    .funnel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .funnel-step {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .funnel-bar-container {
+      flex: 1;
+      height: 36px;
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .funnel-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--burgundy), var(--gold-dark));
+      border-radius: 8px;
+      transition: width 0.6s ease;
+      min-width: 2px;
+    }
+
+    .funnel-label {
+      width: 160px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      text-align: right;
+    }
+
+    .funnel-value {
+      width: 80px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .funnel-pct {
+      width: 50px;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    /* ==================== FILTERS ==================== */
+    .filters {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .filters input, .filters select {
+      padding: 8px 14px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: inherit;
+    }
+
+    .filters input:focus, .filters select:focus {
+      outline: none;
+      border-color: var(--gold);
+    }
+
+    /* ==================== MODAL ==================== */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 560px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-header h3 { font-size: 18px; }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 24px;
+      cursor: pointer;
+    }
+
+    .modal-body { padding: 24px; }
+    .modal-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+
+    /* ==================== SCENARIO CHART ==================== */
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .scenario-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .scenario-card .emoji { font-size: 32px; margin-bottom: 8px; }
+    .scenario-card .name { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+    .scenario-card .count { font-size: 24px; font-weight: 700; color: var(--gold); }
+
+    /* ==================== BROADCAST ==================== */
+    .broadcast-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-bottom: 1px solid rgba(58, 37, 48, 0.5);
+    }
+
+    .broadcast-item:last-child { border-bottom: none; }
+
+    .broadcast-info h4 { font-size: 14px; margin-bottom: 4px; }
+    .broadcast-info p { font-size: 12px; color: var(--text-muted); }
+
+    .broadcast-stats {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .broadcast-stat {
+      text-align: center;
+    }
+
+    .broadcast-stat .num { font-size: 16px; font-weight: 600; color: var(--gold); }
+    .broadcast-stat .lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+
+    /* ==================== TOAST ==================== */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--gold);
+      border-radius: 10px;
+      padding: 16px 24px;
+      color: var(--text-primary);
+      font-size: 14px;
+      z-index: 2000;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* ==================== RESPONSIVE ==================== */
+    @media (max-width: 768px) {
+      .sidebar { display: none; }
+      .main { margin-left: 0; padding: 16px; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .scenario-grid { grid-template-columns: 1fr; }
+      .filters { flex-direction: column; }
+    }
+
+    /* ==================== LOADING ==================== */
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 60px;
+      color: var(--text-muted);
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-state p { font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    // ==================== STATE ====================
+    const state = {
+      token: localStorage.getItem('altyn_token'),
+      currentPage: 'dashboard',
+      stats: null,
+      funnel: null,
+      users: [],
+      broadcasts: [],
+      loading: false,
+      toast: null
+    };
+
+    const API = '/api';
+
+    // ==================== API HELPERS ====================
+    async function api(path, options = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+
+      const res = await fetch(`${API}${path}`, { ...options, headers });
+      if (res.status === 401) {
+        state.token = null;
+        localStorage.removeItem('altyn_token');
+        render();
+        return null;
+      }
+      return res.json();
+    }
+
+    // ==================== RENDER ====================
+    function render() {
+      const app = document.getElementById('app');
+      if (!state.token) {
+        app.innerHTML = renderLogin();
+      } else {
+        app.innerHTML = renderApp();
+      }
+      attachEvents();
+    }
+
+    function renderLogin() {
+      return `
+        <div class="login-screen">
+          <div class="login-box">
+            <h1>✦ Алтын</h1>
+            <p>Маркетинговая админ-панель</p>
+            <div class="form-group">
+              <label>Логин</label>
+              <input type="text" id="login-user" placeholder="admin" value="admin">
+            </div>
+            <div class="form-group">
+              <label>Пароль</label>
+              <input type="password" id="login-pass" placeholder="Введите пароль">
+            </div>
+            <button class="btn btn-primary" id="login-btn">Войти</button>
+            <p style="margin-top:16px;font-size:11px;color:var(--text-muted)">Первый вход создаст аккаунт администратора</p>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderApp() {
+      return `
+        <div class="app">
+          ${renderSidebar()}
+          <div class="main">
+            ${renderPage()}
+          </div>
+        </div>
+        ${state.toast ? `<div class="toast" id="toast">${state.toast}</div>` : ''}
+      `;
+    }
+
+    function renderSidebar() {
+      const items = [
+        { id: 'dashboard', icon: '📊', label: 'Дашборд' },
+        { id: 'users', icon: '👥', label: 'Пользователи' },
+        { id: 'broadcasts', icon: '📢', label: 'Рассылки' },
+        { id: 'funnel', icon: '🔄', label: 'Воронка' },
+        { id: 'analytics', icon: '📈', label: 'Аналитика' }
+      ];
+
+      return `
+        <div class="sidebar">
+          <div class="sidebar-header">
+            <h2>✦ Алтын</h2>
+            <span>Админ-панель</span>
+          </div>
+          <div class="sidebar-nav">
+            ${items.map(i => `
+              <div class="nav-item ${state.currentPage === i.id ? 'active' : ''}" data-page="${i.id}">
+                <span class="icon">${i.icon}</span>
+                ${i.label}
+              </div>
+            `).join('')}
+          </div>
+          <div class="sidebar-footer">
+            <div class="nav-item" id="logout-btn">
+              <span class="icon">🚪</span>
+              Выйти
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderPage() {
+      switch (state.currentPage) {
+        case 'dashboard': return renderDashboard();
+        case 'users': return renderUsers();
+        case 'broadcasts': return renderBroadcasts();
+        case 'funnel': return renderFunnel();
+        case 'analytics': return renderAnalytics();
+        default: return renderDashboard();
+      }
+    }
+
+    // ==================== DASHBOARD ====================
+    function renderDashboard() {
+      const s = state.stats;
+      if (!s) return `<div class="loading"><div class="spinner"></div>Загрузка...</div>`;
+
+      const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
+
+      return `
+        <div class="page-header">
+          <h1>Дашборд</h1>
+          <p>Статистика Telegram-бота @altyntherapybot</p>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="label">Всего пользователей</div>
+            <div class="value">${s.total}</div>
+            <div class="change up">+${s.todayUsers} сегодня</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Квиз пройден</div>
+            <div class="value">${s.quizCompleted}</div>
+            <div class="change">${s.total ? Math.round(s.quizCompleted / s.total * 100) : 0}% конверсия</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">На прогреве</div>
+            <div class="value">${s.warmupActive}</div>
+            <div class="change">Получают серию</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Записались</div>
+            <div class="value">${s.booked}</div>
+            <div class="change up">${s.quizCompleted ? Math.round(s.booked / s.quizCompleted * 100) : 0}% от квиза</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">За неделю</div>
+            <div class="value">${s.weekUsers}</div>
+            <div class="change">Новых пользователей</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+          <div class="card">
+            <div class="card-header"><h3>Сценарии</h3></div>
+            <div class="card-body">
+              ${s.scenarios.length ? `
+                <div class="scenario-grid">
+                  ${s.scenarios.map(sc => `
+                    <div class="scenario-card">
+                      <div class="emoji">${(scenarioNames[sc.scenario] || sc.scenario).split(' ')[0]}</div>
+                      <div class="name">${(scenarioNames[sc.scenario] || sc.scenario).split(' ').slice(1).join(' ') || sc.scenario}</div>
+                      <div class="count">${sc.count}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : '<div class="empty-state"><div class="icon">🎭</div><p>Пока нет данных по сценариям</p></div>'}
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><h3>Этапы воронки</h3></div>
+            <div class="card-body">
+              ${s.stages.length ? `
+                <div class="funnel">
+                  ${s.stages.map(st => {
+                    const stageNames = { new: 'Новые', started: 'Начали', quiz: 'В квизе', quiz_completed: 'Квиз пройден', booking: 'Запись', booked: 'Записались', completed: 'Завершили' };
+                    const pct = s.total ? Math.round(st.count / s.total * 100) : 0;
+                    return `
+                      <div class="funnel-step">
+                        <div class="funnel-label">${stageNames[st.funnel_stage] || st.funnel_stage}</div>
+                        <div class="funnel-bar-container">
+                          <div class="funnel-bar" style="width:${Math.max(pct, 2)}%"></div>
+                        </div>
+                        <div class="funnel-value">${st.count}</div>
+                        <div class="funnel-pct">${pct}%</div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              ` : '<div class="empty-state"><div class="icon">🔄</div><p>Пока нет данных</p></div>'}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==================== USERS ====================
+    function renderUsers() {
+      return `
+        <div class="page-header">
+          <h1>Пользователи</h1>
+          <p>Все пользователи Telegram-бота</p>
+        </div>
+
+        <div class="filters">
+          <input type="text" id="filter-search" placeholder="🔍 Поиск по имени..." value="">
+          <select id="filter-scenario">
+            <option value="">Все сценарии</option>
+            <option value="savior">🛡 Спасатель</option>
+            <option value="fear">💔 Страх</option>
+            <option value="control">🎯 Контроль</option>
+            <option value="freeze">❄️ Заморозка</option>
+          </select>
+          <select id="filter-stage">
+            <option value="">Все этапы</option>
+            <option value="new">Новые</option>
+            <option value="started">Начали</option>
+            <option value="quiz">В квизе</option>
+            <option value="quiz_completed">Квиз пройден</option>
+            <option value="booking">Запись</option>
+            <option value="booked">Записались</option>
+          </select>
+          <select id="filter-booking">
+            <option value="">Все статусы</option>
+            <option value="none">Без записи</option>
+            <option value="booked">Записан</option>
+            <option value="completed">Завершён</option>
+            <option value="cancelled">Отменён</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="filter-apply">Применить</button>
+        </div>
+
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Пользователь</th>
+                <th>Сценарий</th>
+                <th>Этап</th>
+                <th>Запись</th>
+                <th>Прогрев</th>
+                <th>Дата</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${state.users.length ? state.users.map(u => {
+                const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
+                const stageNames = { new: 'Новый', started: 'Начал', quiz: 'В квизе', quiz_completed: 'Квиз ✓', booking: 'Запись', booked: 'Записан', completed: 'Завершён' };
+                const bookingBadge = { none: 'badge-muted', booked: 'badge-gold', completed: 'badge-success', cancelled: 'badge-danger' };
+                const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || 'Аноним';
+                return `
+                  <tr>
+                    <td>
+                      <strong>${name}</strong><br>
+                      <span style="font-size:11px;color:var(--text-muted)">${u.username ? '@' + u.username : 'ID: ' + u.telegram_id}</span>
+                    </td>
+                    <td>${u.scenario ? `<span class="badge badge-info">${scenarioNames[u.scenario] || u.scenario}</span>` : '—'}</td>
+                    <td><span class="badge badge-gold">${stageNames[u.funnel_stage] || u.funnel_stage}</span></td>
+                    <td><span class="badge ${bookingBadge[u.booking_status] || 'badge-muted'}">${u.booking_status || 'none'}</span></td>
+                    <td>${u.warmup_active ? `День ${u.warmup_day || 0}` : '—'}</td>
+                    <td style="font-size:12px">${new Date(u.created_at).toLocaleDateString('ru')}</td>
+                    <td>
+                      <button class="btn btn-secondary btn-sm user-detail-btn" data-id="${u.telegram_id}">👁</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('') : `
+                <tr><td colspan="7">
+                  <div class="empty-state"><div class="icon">👥</div><p>Пока нет пользователей</p></div>
+                </td></tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // ==================== BROADCASTS ====================
+    function renderBroadcasts() {
+      return `
+        <div class="page-header">
+          <h1>Рассылки</h1>
+          <p>Массовые рассылки по сегментам аудитории</p>
+        </div>
+
+        <button class="btn btn-primary" id="new-broadcast-btn" style="margin-bottom:24px">+ Новая рассылка</button>
+
+        <div class="card">
+          ${state.broadcasts.length ? state.broadcasts.map(b => `
+            <div class="broadcast-item">
+              <div class="broadcast-info">
+                <h4>${b.title}</h4>
+                <p>Сегмент: ${b.segment} | ${new Date(b.created_at).toLocaleDateString('ru')}</p>
+              </div>
+              <div class="broadcast-stats">
+                <div class="broadcast-stat">
+                  <div class="num">${b.sent_count}</div>
+                  <div class="lbl">Отправлено</div>
+                </div>
+                <div class="broadcast-stat">
+                  <div class="num">${b.failed_count}</div>
+                  <div class="lbl">Ошибки</div>
+                </div>
+                <span class="badge ${b.status === 'sent' ? 'badge-success' : b.status === 'sending' ? 'badge-warning' : 'badge-muted'}">${b.status}</span>
+                ${b.status === 'draft' ? `<button class="btn btn-primary btn-sm send-broadcast-btn" data-id="${b.id}">Отправить</button>` : ''}
+              </div>
+            </div>
+          `).join('') : `
+            <div class="empty-state" style="padding:40px"><div class="icon">📢</div><p>Нет рассылок. Создайте первую!</p></div>
+          `}
+        </div>
+
+        <div id="broadcast-modal"></div>
+      `;
+    }
+
+    // ==================== FUNNEL ====================
+    function renderFunnel() {
+      const f = state.funnel;
+      if (!f) return `<div class="loading"><div class="spinner"></div>Загрузка воронки...</div>`;
+
+      return `
+        <div class="page-header">
+          <h1>Воронка продаж</h1>
+          <p>Конверсия на каждом этапе</p>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <div class="funnel">
+              ${f.funnel.map((step, i) => {
+                const colors = ['#D4A853', '#E8C97A', '#D4A0A0', '#A07070', '#8B2D4A', '#6B1D3A', '#4A1528'];
+                return `
+                  <div class="funnel-step">
+                    <div class="funnel-label">${step.stage}</div>
+                    <div class="funnel-bar-container">
+                      <div class="funnel-bar" style="width:${Math.max(step.pct, 2)}%;background:${colors[i] || colors[0]}"></div>
+                    </div>
+                    <div class="funnel-value">${step.count}</div>
+                    <div class="funnel-pct">${step.pct}%</div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:24px">
+          <div class="card-header"><h3>Расчёт конверсий</h3></div>
+          <div class="card-body">
+            <table>
+              <thead>
+                <tr><th>Переход</th><th>Конверсия</th><th>Потери</th></tr>
+              </thead>
+              <tbody>
+                ${f.funnel.slice(1).map((step, i) => {
+                  const prev = f.funnel[i];
+                  const conv = prev.count ? Math.round(step.count / prev.count * 100) : 0;
+                  const loss = prev.count - step.count;
+                  return `
+                    <tr>
+                      <td>${prev.stage} → ${step.stage}</td>
+                      <td><span class="badge badge-gold">${conv}%</span></td>
+                      <td><span style="color:var(--danger)">${loss > 0 ? '-' + loss : '0'}</span></td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==================== ANALYTICS ====================
+    function renderAnalytics() {
+      const s = state.stats;
+      if (!s) return `<div class="loading"><div class="spinner"></div>Загрузка...</div>`;
+
+      return `
+        <div class="page-header">
+          <h1>Аналитика</h1>
+          <p>Подробная аналитика по боту и воронке</p>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="label">Конверсия в квиз</div>
+            <div class="value">${s.total ? Math.round(s.quizCompleted / s.total * 100) : 0}%</div>
+            <div class="change">от всех пользователей</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Конверсия в запись</div>
+            <div class="value">${s.quizCompleted ? Math.round(s.booked / s.quizCompleted * 100) : 0}%</div>
+            <div class="change">от прошедших квиз</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Средний прогрев</div>
+            <div class="value">${s.warmupActive || 0}</div>
+            <div class="change">активных серий</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Потенциальный доход</div>
+            <div class="value">$${(s.booked || 0) * 1000}</div>
+            <div class="change">${s.booked || 0} × $1000 за пакет</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Новые пользователи по дням</h3></div>
+          <div class="card-body">
+            ${s.dailyStats.length ? `
+              <div style="display:flex;align-items:flex-end;gap:4px;height:200px;padding:20px 0;">
+                ${s.dailyStats.map(d => {
+                  const max = Math.max(...s.dailyStats.map(x => x.count), 1);
+                  const h = Math.max(d.count / max * 160, 4);
+                  return `
+                    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
+                      <span style="font-size:10px;color:var(--text-muted)">${d.count}</span>
+                      <div style="width:100%;height:${h}px;background:linear-gradient(to top,var(--burgundy),var(--gold));border-radius:4px 4px 0 0;"></div>
+                      <span style="font-size:9px;color:var(--text-muted);transform:rotate(-45deg);white-space:nowrap">${d.date.slice(5)}</span>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : '<div class="empty-state"><div class="icon">📈</div><p>Пока нет данных для графика</p></div>'}
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
+          <div class="card">
+            <div class="card-header"><h3>Источники трафика</h3></div>
+            <div class="card-body" id="sources-container">
+              <div class="loading"><div class="spinner"></div></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Распределение сценариев</h3></div>
+            <div class="card-body" id="scenarios-container">
+              <div class="loading"><div class="spinner"></div></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==================== EVENT HANDLERS ====================
+    function attachEvents() {
+      // Navigation
+      document.querySelectorAll('.nav-item[data-page]').forEach(el => {
+        el.addEventListener('click', () => {
+          state.currentPage = el.dataset.page;
+          render();
+          loadPageData();
+        });
+      });
+
+      // Login
+      const loginBtn = document.getElementById('login-btn');
+      if (loginBtn) {
+        loginBtn.addEventListener('click', handleLogin);
+        document.getElementById('login-pass')?.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') handleLogin();
+        });
+      }
+
+      // Logout
+      document.getElementById('logout-btn')?.addEventListener('click', () => {
+        state.token = null;
+        localStorage.removeItem('altyn_token');
+        render();
+      });
+
+      // Filter apply
+      document.getElementById('filter-apply')?.addEventListener('click', loadUsers);
+
+      // New broadcast
+      document.getElementById('new-broadcast-btn')?.addEventListener('click', showBroadcastModal);
+
+      // Send broadcast buttons
+      document.querySelectorAll('.send-broadcast-btn').forEach(btn => {
+        btn.addEventListener('click', () => sendBroadcastAction(parseInt(btn.dataset.id)));
+      });
+
+      // User detail buttons
+      document.querySelectorAll('.user-detail-btn').forEach(btn => {
+        btn.addEventListener('click', () => showUserDetail(parseInt(btn.dataset.id)));
+      });
+
+      // Load analytics data
+      if (state.currentPage === 'analytics') {
+        loadAnalyticsDetails();
+      }
+    }
+
+    async function handleLogin() {
+      const username = document.getElementById('login-user').value;
+      const password = document.getElementById('login-pass').value;
+      if (!username || !password) return;
+
+      const data = await api('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password })
+      });
+
+      if (data && data.token) {
+        state.token = data.token;
+        localStorage.setItem('altyn_token', data.token);
+        render();
+        loadPageData();
+      } else {
+        showToast('Неверный логин или пароль');
+      }
+    }
+
+    // ==================== DATA LOADING ====================
+    async function loadPageData() {
+      switch (state.currentPage) {
+        case 'dashboard':
+          state.stats = await api('/dashboard');
+          render();
+          break;
+        case 'users':
+          await loadUsers();
+          break;
+        case 'broadcasts':
+          state.broadcasts = await api('/broadcasts') || [];
+          render();
+          break;
+        case 'funnel':
+          state.funnel = await api('/dashboard/funnel');
+          render();
+          break;
+        case 'analytics':
+          state.stats = await api('/dashboard');
+          render();
+          break;
+      }
+    }
+
+    async function loadUsers() {
+      const search = document.getElementById('filter-search')?.value || '';
+      const scenario = document.getElementById('filter-scenario')?.value || '';
+      const stage = document.getElementById('filter-stage')?.value || '';
+      const booking = document.getElementById('filter-booking')?.value || '';
+
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (scenario) params.set('scenario', scenario);
+      if (stage) params.set('funnel_stage', stage);
+      if (booking) params.set('booking_status', booking);
+
+      state.users = await api(`/users?${params}`) || [];
+      render();
+    }
+
+    async function loadAnalyticsDetails() {
+      const sources = await api('/analytics/sources');
+      const scenarios = await api('/analytics/scenarios');
+
+      const srcEl = document.getElementById('sources-container');
+      if (srcEl && sources) {
+        srcEl.innerHTML = sources.length ? sources.map(s => `
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+            <span>${s.source}</span>
+            <span class="badge badge-gold">${s.count}</span>
+          </div>
+        `).join('') : '<div class="empty-state"><p>Нет данных</p></div>';
+      }
+
+      const scEl = document.getElementById('scenarios-container');
+      const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
+      if (scEl && scenarios) {
+        scEl.innerHTML = scenarios.length ? scenarios.map(s => `
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+            <span>${scenarioNames[s.scenario] || s.scenario}</span>
+            <span class="badge badge-info">${s.count}</span>
+          </div>
+        `).join('') : '<div class="empty-state"><p>Нет данных</p></div>';
+      }
+    }
+
+    // ==================== MODALS ====================
+    function showBroadcastModal() {
+      const modal = document.getElementById('broadcast-modal');
+      modal.innerHTML = `
+        <div class="modal-overlay" id="modal-overlay">
+          <div class="modal">
+            <div class="modal-header">
+              <h3>Новая рассылка</h3>
+              <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="form-group">
+                <label>Название</label>
+                <input type="text" id="bc-title" placeholder="Название рассылки">
+              </div>
+              <div class="form-group">
+                <label>Сегмент</label>
+                <select id="bc-segment">
+                  <option value="all">Все пользователи</option>
+                  <option value="quiz_completed">Прошли квиз</option>
+                  <option value="warmup_active">На прогреве</option>
+                  <option value="not_booked">Не записались</option>
+                  <option value="booked">Записались</option>
+                  <option value="scenario_savior">🛡 Спасатели</option>
+                  <option value="scenario_fear">💔 Страх</option>
+                  <option value="scenario_control">🎯 Контроль</option>
+                  <option value="scenario_freeze">❄️ Заморозка</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Текст сообщения (Markdown)</label>
+                <textarea id="bc-content" rows="6" placeholder="Текст рассылки..."></textarea>
+              </div>
+              <div class="form-group">
+                <label>URL картинки (необязательно)</label>
+                <input type="text" id="bc-image" placeholder="https://...">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="modal-cancel">Отмена</button>
+              <button class="btn btn-primary" id="bc-save">Сохранить черновик</button>
+              <button class="btn btn-primary" id="bc-send-now" style="background:linear-gradient(135deg,var(--success),#2d9f5a);color:#fff">Отправить сейчас</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('modal-close').addEventListener('click', () => modal.innerHTML = '');
+      document.getElementById('modal-cancel').addEventListener('click', () => modal.innerHTML = '');
+      document.getElementById('modal-overlay').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) modal.innerHTML = '';
+      });
+
+      document.getElementById('bc-save').addEventListener('click', async () => {
+        await createBroadcastAction('draft');
+        modal.innerHTML = '';
+      });
+
+      document.getElementById('bc-send-now').addEventListener('click', async () => {
+        const id = await createBroadcastAction('draft');
+        if (id) await sendBroadcastAction(id);
+        modal.innerHTML = '';
+      });
+    }
+
+    async function createBroadcastAction(status) {
+      const title = document.getElementById('bc-title').value;
+      const content = document.getElementById('bc-content').value;
+      const segment = document.getElementById('bc-segment').value;
+      const image_url = document.getElementById('bc-image').value;
+
+      if (!title || !content) {
+        showToast('Заполните название и текст');
+        return null;
+      }
+
+      const result = await api('/broadcasts', {
+        method: 'POST',
+        body: JSON.stringify({ title, content, segment, image_url, status })
+      });
+
+      if (result) {
+        showToast('Рассылка создана');
+        state.broadcasts = await api('/broadcasts') || [];
+        render();
+        return result.id;
+      }
+      return null;
+    }
+
+    async function sendBroadcastAction(id) {
+      const result = await api(`/broadcasts/${id}/send`, { method: 'POST' });
+      if (result) {
+        showToast('Рассылка отправляется...');
+        setTimeout(async () => {
+          state.broadcasts = await api('/broadcasts') || [];
+          render();
+        }, 3000);
+      }
+    }
+
+    function showUserDetail(telegramId) {
+      // Simple alert with user info for now
+      const user = state.users.find(u => u.telegram_id === telegramId);
+      if (!user) return;
+
+      const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
+      const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Аноним';
+
+      const details = [
+        `👤 ${name}`,
+        user.username ? `📱 @${user.username}` : '',
+        `🆔 ${user.telegram_id}`,
+        `🎭 Сценарий: ${scenarioNames[user.scenario] || 'не определён'}`,
+        `📊 Этап: ${user.funnel_stage}`,
+        `📝 Запись: ${user.booking_status}`,
+        user.booking_name ? `📋 Имя для записи: ${user.booking_name}` : '',
+        user.booking_request ? `💬 Запрос: ${user.booking_request}` : '',
+        user.booking_time ? `📅 Время: ${user.booking_time}` : '',
+        `🔥 Прогрев: день ${user.warmup_day || 0}`,
+        `📅 Регистрация: ${new Date(user.created_at).toLocaleString('ru')}`,
+        `🔗 Источник: ${user.source}`
+      ].filter(Boolean).join('\n');
+
+      alert(details);
+    }
+
+    // ==================== TOAST ====================
+    function showToast(msg) {
+      state.toast = msg;
+      render();
+      setTimeout(() => {
+        state.toast = null;
+        const t = document.getElementById('toast');
+        if (t) t.remove();
+      }, 3000);
+    }
+
+    // ==================== INIT ====================
+    render();
+    if (state.token) loadPageData();
+  </script>
+</body>
+</html>
