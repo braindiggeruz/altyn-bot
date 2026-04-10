@@ -7,7 +7,11 @@ import {
 } from './database.js';
 import {
   WELCOME_TEXT, WELCOME_IMAGE, QUIZ_QUESTIONS, SCENARIO_RESULTS,
-  RESULT_IMAGES, WARMUP_MESSAGES, FOLLOWUP_MESSAGES, BOOKING_CONFIRM_TEXT
+  RESULT_IMAGES, WARMUP_MESSAGES, FOLLOWUP_MESSAGES, BOOKING_CONFIRM_TEXT,
+  SCENARIO_WARMUPS, TESTIMONIALS, EXIT_SURVEY_TEXT, EXIT_SURVEY_OPTIONS,
+  EXIT_FOLLOWUPS, QUIZ_REMINDER_2H, QUIZ_REMINDER_24H,
+  BOOKING_REMINDER_30MIN, BOOKING_REMINDER_24H,
+  REFERRAL_TEXT, REFERRAL_NOTIFY
 } from './content.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,13 +27,22 @@ export function initBot(token) {
     const chatId = msg.chat.id;
     const param = match[1] ? match[1].trim() : '';
 
-    // Parse UTM from start param
+    // Parse UTM or referral from start param
     let source = 'organic';
     let utm = {};
+    let referrerId = null;
+
     if (param) {
-      const parts = param.split('_');
-      source = parts[0] || 'link';
-      utm = { utm_source: parts[0], utm_medium: parts[1], utm_campaign: parts[2] };
+      if (param.startsWith('ref_')) {
+        // Referral link
+        referrerId = param.replace('ref_', '');
+        source = 'referral';
+        utm = { utm_source: 'referral', utm_medium: 'bot', utm_campaign: referrerId };
+      } else {
+        const parts = param.split('_');
+        source = parts[0] || 'link';
+        utm = { utm_source: parts[0], utm_medium: parts[1], utm_campaign: parts[2] };
+      }
     }
 
     const user = createUser({
@@ -40,7 +53,7 @@ export function initBot(token) {
       source
     });
 
-    logEvent('start', chatId, { source, param });
+    logEvent('start', chatId, { source, param, referrerId });
     logMessage(chatId, 'in', 'command', '/start');
 
     // Reset quiz state for restart
@@ -52,8 +65,27 @@ export function initBot(token) {
       warmup_day: 0,
       warmup_active: 1,
       booking_status: 'none',
+      referred_by: referrerId || undefined,
       ...utm
     });
+
+    // Track referral
+    if (referrerId) {
+      try {
+        const { trackReferral } = await import('./database.js');
+        trackReferral(referrerId, chatId);
+        // Notify referrer
+        const referrer = getUser(parseInt(referrerId));
+        if (referrer) {
+          const newName = msg.from.first_name || 'Кто-то';
+          bot.sendMessage(referrer.telegram_id, REFERRAL_NOTIFY(referrer.first_name, newName), {
+            parse_mode: 'Markdown'
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.error('Referral tracking error:', e.message);
+      }
+    }
 
     // Send welcome image + text
     try {
@@ -96,11 +128,11 @@ export function initBot(token) {
     if (OWNER_ID) {
       const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
       const uname = msg.from.username ? `@${msg.from.username}` : 'нет username';
-      bot.sendMessage(OWNER_ID, `🆕 *Новый пользователь!*\n\n👤 ${name}\n📱 ${uname}\n📊 Источник: ${source}`, { parse_mode: 'Markdown' }).catch(() => {});
+      bot.sendMessage(OWNER_ID, `🆕 *Новый пользователь!*\n\n👤 ${name}\n📱 ${uname}\n📊 Источник: ${source}${referrerId ? `\n🔗 Реферал от: ${referrerId}` : ''}`, { parse_mode: 'Markdown' }).catch(() => {});
     }
   });
 
-  // Callback queries (quiz, booking, etc.)
+  // Callback queries (quiz, booking, exit survey, referral, etc.)
   bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const data = query.data;
@@ -159,6 +191,84 @@ export function initBot(token) {
       return;
     }
 
+    // Continue quiz (from reminder)
+    if (data === 'continue_quiz') {
+      const user = getUser(chatId);
+      if (!user) return;
+      let answers = [];
+      try { answers = JSON.parse(user.quiz_answers || '[]'); } catch(e) { answers = []; }
+      const nextQ = answers.length;
+      if (nextQ < QUIZ_QUESTIONS.length) {
+        updateUser(chatId, { funnel_stage: 'quiz' });
+        await sendQuizQuestion(chatId, nextQ);
+      } else {
+        await sendQuizResult(chatId, answers);
+      }
+      return;
+    }
+
+    // Continue booking (from reminder)
+    if (data === 'continue_booking') {
+      updateUser(chatId, { funnel_stage: 'booking' });
+      const user = getUser(chatId);
+      if (user && user.booking_name) {
+        if (!user.booking_request) {
+          await bot.sendMessage(chatId, '✍️ Отлично! Опишите кратко ваш запрос — с чем хотите поработать?', {
+            reply_markup: { force_reply: true }
+          });
+        } else {
+          await bot.sendMessage(chatId, '📅 Когда вам удобно? Напишите желаемую дату и время (например: «Среда, 18:00»)', {
+            reply_markup: { force_reply: true }
+          });
+        }
+      } else {
+        await bot.sendMessage(chatId, '📝 *Запись на бесплатную диагностику*\n\nКак вас зовут?', {
+          parse_mode: 'Markdown',
+          reply_markup: { force_reply: true }
+        });
+      }
+      return;
+    }
+
+    // Exit survey answers
+    if (data.startsWith('exit_')) {
+      logEvent('exit_survey', chatId, { reason: data });
+      updateUser(chatId, { exit_reason: data });
+
+      const followups = EXIT_FOLLOWUPS[data];
+      if (followups) {
+        for (const text of followups) {
+          await bot.sendMessage(chatId, text, {
+            parse_mode: 'Markdown',
+            reply_markup: data !== 'exit_solved' && data !== 'exit_irrelevant' ? {
+              inline_keyboard: [
+                [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
+                [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+              ]
+            } : undefined
+          });
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+
+      // Thank them
+      await bot.sendMessage(chatId, '🙏 Спасибо за ответ! Это поможет нам стать лучше.');
+      logMessage(chatId, 'out', 'exit_followup', data);
+      return;
+    }
+
+    // Referral link request
+    if (data === 'get_referral') {
+      const user = getUser(chatId);
+      if (!user) return;
+      const refCode = chatId.toString();
+      const { getReferralCount } = await import('./database.js');
+      const count = getReferralCount(chatId);
+      const text = REFERRAL_TEXT(refCode).replace('*0 человек*', `*${count} человек*`);
+      await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      return;
+    }
+
     // WhatsApp link
     if (data === 'whatsapp') {
       await bot.sendMessage(chatId, '📱 Напишите мне в WhatsApp:\nhttps://wa.me/77077198561\n\nИли позвоните: +7 707 719 85 61', {
@@ -186,8 +296,8 @@ export function initBot(token) {
 
   // Handle text messages (for booking flow)
   bot.on('message', async (msg) => {
-    if (msg.text && msg.text.startsWith('/')) return; // Skip commands
-    if (!msg.reply_to_message) return; // Only process replies
+    if (msg.text && msg.text.startsWith('/')) return;
+    if (!msg.reply_to_message) return;
 
     const chatId = msg.chat.id;
     const user = getUser(chatId);
@@ -230,9 +340,9 @@ export function initBot(token) {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
+            [{ text: '🎁 Пригласить друга (скидка 10%)', callback_data: 'get_referral' }],
             [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
-            [{ text: '📸 Instagram', callback_data: 'instagram' }],
-            [{ text: '🌐 Сайт', url: 'https://altyn-therapy.pages.dev' }]
+            [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
           ]
         }
       });
@@ -240,20 +350,32 @@ export function initBot(token) {
       logMessage(chatId, 'in', 'booking_time', msg.text);
       logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
 
-      // Notify owner with full details
+      // AUTO-HANDOFF: Notify owner with full details + quick action buttons
       if (OWNER_ID) {
         const scenario = updatedUser.scenario || 'не определён';
+        const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
         const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
-        const ownerMsg = `🔥 *НОВАЯ ЗАЯВКА НА ДИАГНОСТИКУ!*\n\n` +
+        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
           `👤 *Имя:* ${updatedUser.booking_name}\n` +
           `📱 *Telegram:* ${uname}\n` +
           `🆔 *ID:* \`${chatId}\`\n` +
-          `🎭 *Сценарий:* ${scenario}\n` +
+          `🎭 *Сценарий:* ${scenarioTitle}\n` +
           `📝 *Запрос:* ${updatedUser.booking_request}\n` +
-          `📅 *Время:* ${msg.text}\n\n` +
-          `Напишите клиенту: tg://user?id=${chatId}`;
+          `📅 *Время:* ${msg.text}\n` +
+          `📊 *Источник:* ${updatedUser.source || 'organic'}\n` +
+          `${updatedUser.utm_campaign ? `📎 *Кампания:* ${updatedUser.utm_campaign}\n` : ''}` +
+          `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
+          `📞 Написать: tg://user?id=${chatId}`;
 
-        bot.sendMessage(OWNER_ID, ownerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+        bot.sendMessage(OWNER_ID, ownerMsg, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Подтвердить запись', callback_data: `confirm_booking_${chatId}` }],
+              [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }]
+            ]
+          }
+        }).catch(() => {});
       }
 
       // Stop warmup
@@ -264,7 +386,7 @@ export function initBot(token) {
 
   // Help command
   bot.onText(/\/help/, (msg) => {
-    bot.sendMessage(msg.chat.id, `🔮 *Алтын | Гипнотерапевт*\n\nКоманды:\n/start — Начать заново\n/quiz — Пройти тест\n/book — Записаться на диагностику\n/about — О гипнотерапии\n/contact — Контакты`, { parse_mode: 'Markdown' });
+    bot.sendMessage(msg.chat.id, `🔮 *Алтын | Гипнотерапевт*\n\nКоманды:\n/start — Начать заново\n/quiz — Пройти тест\n/book — Записаться на диагностику\n/about — О гипнотерапии\n/contact — Контакты\n/referral — Реферальная ссылка`, { parse_mode: 'Markdown' });
   });
 
   bot.onText(/\/quiz/, (msg) => {
@@ -278,6 +400,14 @@ export function initBot(token) {
       parse_mode: 'Markdown',
       reply_markup: { force_reply: true }
     });
+  });
+
+  bot.onText(/\/referral/, async (msg) => {
+    const chatId = msg.chat.id;
+    const { getReferralCount } = await import('./database.js');
+    const count = getReferralCount(chatId);
+    const text = REFERRAL_TEXT(chatId.toString()).replace('*0 человек*', `*${count} человек*`);
+    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
   });
 
   bot.onText(/\/about/, (msg) => {
@@ -305,7 +435,7 @@ export function initBot(token) {
     });
   });
 
-  console.log('🤖 Altyn Therapy Bot started');
+  console.log('🤖 Altyn Therapy Bot v2.0 started');
   return bot;
 }
 
@@ -325,7 +455,6 @@ async function sendQuizQuestion(chatId, index) {
 }
 
 async function sendQuizResult(chatId, answers) {
-  // Calculate scores
   const scores = { savior: 0, fear: 0, control: 0, freeze: 0 };
 
   answers.forEach(a => {
@@ -338,7 +467,6 @@ async function sendQuizResult(chatId, answers) {
     }
   });
 
-  // Determine dominant scenario
   const scenario = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
   const result = SCENARIO_RESULTS[scenario];
 
@@ -361,9 +489,15 @@ async function sendQuizResult(chatId, answers) {
   }
 
   // Send result text
-  await bot.sendMessage(chatId, result.text, {
-    parse_mode: 'Markdown'
-  });
+  await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
+
+  // Send social proof (testimonial) for this scenario
+  const testimonials = TESTIMONIALS[scenario];
+  if (testimonials && testimonials.length > 0) {
+    const randomTestimonial = testimonials[Math.floor(Math.random() * testimonials.length)];
+    await new Promise(r => setTimeout(r, 1000));
+    await bot.sendMessage(chatId, randomTestimonial, { parse_mode: 'Markdown' });
+  }
 
   // Send CTA
   await bot.sendMessage(chatId, result.cta, {
@@ -387,27 +521,46 @@ async function sendQuizResult(chatId, answers) {
     bot.sendMessage(OWNER_ID, `🎯 *Квиз пройден!*\n\n👤 ${name} (${uname})\n🎭 Сценарий: *${result.title}*\n📊 Баллы: ${JSON.stringify(scores)}`, { parse_mode: 'Markdown' }).catch(() => {});
   }
 
-  // Start warmup
+  // Start scenario-specific warmup
   updateUser(chatId, { warmup_active: 1, warmup_day: 0 });
 }
 
-// Warmup sender (called by cron)
+// ============================================================
+// SCENARIO-SPECIFIC WARMUP SENDER (called by cron)
+// ============================================================
 export async function sendWarmupMessages() {
   if (!bot) return;
 
   const { getAllUsers } = await import('./database.js');
-  const users = getAllUsers({ funnel_stage: 'quiz_completed' });
+  const users = getAllUsers({});
 
   for (const user of users) {
     if (!user.warmup_active || user.booking_status === 'booked') continue;
+    if (!user.scenario && user.funnel_stage !== 'quiz_completed') continue;
 
     const nextDay = (user.warmup_day || 0) + 1;
-    const warmupMsg = WARMUP_MESSAGES.find(m => m.day === nextDay);
-    const followupMsg = FOLLOWUP_MESSAGES.find(m => m.day === nextDay);
+    const scenario = user.scenario;
 
-    const msgToSend = warmupMsg || followupMsg;
+    // Get scenario-specific warmup or fallback to generic
+    let msgToSend = null;
+    if (scenario && SCENARIO_WARMUPS[scenario]) {
+      msgToSend = SCENARIO_WARMUPS[scenario].find(m => m.day === nextDay);
+    }
     if (!msgToSend) {
-      if (nextDay > 14) updateUser(user.telegram_id, { warmup_active: 0 });
+      msgToSend = WARMUP_MESSAGES.find(m => m.day === nextDay);
+    }
+    if (!msgToSend) {
+      msgToSend = FOLLOWUP_MESSAGES.find(m => m.day === nextDay);
+    }
+
+    if (!msgToSend) {
+      if (nextDay > 14) {
+        // Send exit survey before deactivating
+        if (!user.exit_reason) {
+          await sendExitSurvey(user.telegram_id);
+        }
+        updateUser(user.telegram_id, { warmup_active: 0 });
+      }
       continue;
     }
 
@@ -424,9 +577,17 @@ export async function sendWarmupMessages() {
         reply_markup: keyboard
       });
 
+      // Send social proof on day 3 and day 6
+      if ((nextDay === 3 || nextDay === 6) && scenario && TESTIMONIALS[scenario]) {
+        const testimonials = TESTIMONIALS[scenario];
+        const idx = nextDay === 3 ? 0 : (testimonials.length > 1 ? 1 : 0);
+        await new Promise(r => setTimeout(r, 2000));
+        await bot.sendMessage(user.telegram_id, testimonials[idx], { parse_mode: 'Markdown' });
+      }
+
       updateUser(user.telegram_id, { warmup_day: nextDay });
-      logMessage(user.telegram_id, 'out', 'warmup', `Day ${nextDay}`);
-      logEvent('warmup_sent', user.telegram_id, { day: nextDay });
+      logMessage(user.telegram_id, 'out', 'warmup', `Day ${nextDay} (${scenario || 'generic'})`);
+      logEvent('warmup_sent', user.telegram_id, { day: nextDay, scenario });
     } catch (err) {
       console.error(`Warmup error for ${user.telegram_id}:`, err.message);
       if (err.response && err.response.statusCode === 403) {
@@ -434,12 +595,137 @@ export async function sendWarmupMessages() {
       }
     }
 
-    // Small delay between messages
     await new Promise(r => setTimeout(r, 100));
   }
 }
 
-// Broadcast sender
+// ============================================================
+// REMINDER SENDER (called by cron - every 2 hours)
+// ============================================================
+export async function sendReminders() {
+  if (!bot) return;
+
+  const db = (await import('./database.js')).default;
+
+  // 1. Quiz reminders: users who started quiz but didn't finish (2h+ ago)
+  const quizStuck = db.prepare(`
+    SELECT * FROM users 
+    WHERE funnel_stage = 'quiz' 
+    AND quiz_answers IS NOT NULL 
+    AND updated_at <= datetime('now', '-2 hours')
+    AND updated_at >= datetime('now', '-24 hours')
+    AND warmup_active = 1
+  `).all();
+
+  for (const user of quizStuck) {
+    try {
+      let answers = [];
+      try { answers = JSON.parse(user.quiz_answers || '[]'); } catch(e) {}
+      const questionsLeft = QUIZ_QUESTIONS.length - answers.length;
+      if (questionsLeft <= 0) continue;
+
+      await bot.sendMessage(user.telegram_id, QUIZ_REMINDER_2H(questionsLeft), {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '▶️ Продолжить тест', callback_data: 'continue_quiz' }],
+            [{ text: '🔄 Начать заново', callback_data: 'restart_quiz' }]
+          ]
+        }
+      });
+      logEvent('reminder_sent', user.telegram_id, { type: 'quiz_2h' });
+    } catch (err) {
+      if (err.response?.statusCode === 403) {
+        updateUser(user.telegram_id, { warmup_active: 0 });
+      }
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // 2. Quiz reminders: users who started quiz 24h+ ago
+  const quizAbandoned = db.prepare(`
+    SELECT * FROM users 
+    WHERE funnel_stage = 'quiz' 
+    AND updated_at <= datetime('now', '-24 hours')
+    AND updated_at >= datetime('now', '-48 hours')
+    AND warmup_active = 1
+  `).all();
+
+  for (const user of quizAbandoned) {
+    try {
+      await bot.sendMessage(user.telegram_id, QUIZ_REMINDER_24H, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔮 Пройти тест', callback_data: 'quiz_start' }]
+          ]
+        }
+      });
+      logEvent('reminder_sent', user.telegram_id, { type: 'quiz_24h' });
+    } catch (err) {
+      if (err.response?.statusCode === 403) {
+        updateUser(user.telegram_id, { warmup_active: 0 });
+      }
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // 3. Booking reminders: users who started booking but didn't finish
+  const bookingStuck = db.prepare(`
+    SELECT * FROM users 
+    WHERE funnel_stage = 'booking' 
+    AND booking_status = 'none'
+    AND updated_at <= datetime('now', '-30 minutes')
+    AND updated_at >= datetime('now', '-24 hours')
+  `).all();
+
+  for (const user of bookingStuck) {
+    try {
+      await bot.sendMessage(user.telegram_id, BOOKING_REMINDER_30MIN(user.booking_name || user.first_name), {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📝 Продолжить запись', callback_data: 'continue_booking' }],
+            [{ text: '💬 Написать в WhatsApp', url: 'https://wa.me/77077198561' }]
+          ]
+        }
+      });
+      logEvent('reminder_sent', user.telegram_id, { type: 'booking_30min' });
+    } catch (err) {
+      if (err.response?.statusCode === 403) {
+        updateUser(user.telegram_id, { warmup_active: 0 });
+      }
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+}
+
+// ============================================================
+// EXIT SURVEY SENDER
+// ============================================================
+async function sendExitSurvey(telegramId) {
+  if (!bot) return;
+
+  try {
+    const keyboard = EXIT_SURVEY_OPTIONS.map(opt => [{
+      text: opt.text,
+      callback_data: opt.callback
+    }]);
+
+    await bot.sendMessage(telegramId, EXIT_SURVEY_TEXT, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboard }
+    });
+
+    logEvent('exit_survey_sent', telegramId, {});
+  } catch (err) {
+    console.error(`Exit survey error for ${telegramId}:`, err.message);
+  }
+}
+
+// ============================================================
+// BROADCAST SENDER
+// ============================================================
 export async function sendBroadcast(broadcastId) {
   if (!bot) return { sent: 0, failed: 0 };
 
@@ -451,16 +737,37 @@ export async function sendBroadcast(broadcastId) {
   const users = getBroadcastUsers(broadcast.segment);
   let sent = 0, failed = 0;
 
+  // Parse buttons if present
+  let buttons = null;
+  try {
+    if (broadcast.buttons) {
+      buttons = JSON.parse(broadcast.buttons);
+    }
+  } catch(e) {}
+
   for (const u of users) {
     try {
+      const keyboard = buttons && buttons.length > 0 ? {
+        inline_keyboard: buttons.map(b => [{
+          text: b.text,
+          ...(b.url ? { url: b.url } : { callback_data: b.callback || 'book_diagnostic' })
+        }])
+      } : {
+        inline_keyboard: [
+          [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
+        ]
+      };
+
       if (broadcast.image_url) {
         await bot.sendPhoto(u.telegram_id, broadcast.image_url, {
           caption: broadcast.content,
-          parse_mode: 'Markdown'
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
         });
       } else {
         await bot.sendMessage(u.telegram_id, broadcast.content, {
-          parse_mode: 'Markdown'
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
         });
       }
       sent++;
@@ -477,6 +784,7 @@ export async function sendBroadcast(broadcastId) {
     sent_at: new Date().toISOString()
   });
 
+  logEvent('broadcast_sent', null, { id: broadcastId, sent, failed });
   return { sent, failed };
 }
 

@@ -3,1293 +3,593 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Алтын | Админ-панель</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <title>Алтын | Маркетинг Панель v2.0</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     :root {
-      --bg-primary: #0F0A0C;
-      --bg-secondary: #1A1215;
-      --bg-card: #221920;
-      --bg-card-hover: #2A2025;
-      --border: #3A2530;
-      --border-light: #4A3540;
-      --gold: #D4A853;
-      --gold-light: #E8C97A;
-      --gold-dark: #B08930;
-      --rose: #D4A0A0;
-      --rose-dark: #A07070;
-      --burgundy: #6B1D3A;
-      --burgundy-light: #8B2D4A;
-      --text-primary: #F5EDE8;
-      --text-secondary: #A09090;
-      --text-muted: #706060;
-      --success: #4ADE80;
-      --warning: #FBBF24;
-      --danger: #F87171;
-      --info: #60A5FA;
+      --bg: #0a0a0f;
+      --bg2: #12121a;
+      --bg3: #1a1a28;
+      --bg4: #222236;
+      --border: #2a2a40;
+      --text: #e8e8f0;
+      --text2: #9898b0;
+      --text3: #6868a0;
+      --gold: #d4a853;
+      --gold2: #f0c060;
+      --gold3: #b8902a;
+      --green: #4ade80;
+      --red: #f87171;
+      --blue: #60a5fa;
+      --purple: #a78bfa;
+      --orange: #fb923c;
+      --cyan: #22d3ee;
+      --pink: #f472b6;
+      --radius: 12px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.4);
     }
-
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: 'Inter', -apple-system, sans-serif;
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      min-height: 100vh;
-    }
-
-    /* ==================== LOGIN ==================== */
-    .login-screen {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      background: radial-gradient(ellipse at top, #1A1215 0%, #0F0A0C 70%);
-    }
-
-    .login-box {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 48px;
-      width: 400px;
-      text-align: center;
-    }
-
-    .login-box h1 {
-      font-family: 'Playfair Display', serif;
-      color: var(--gold);
-      font-size: 28px;
-      margin-bottom: 8px;
-    }
-
-    .login-box p {
-      color: var(--text-secondary);
-      margin-bottom: 32px;
-      font-size: 14px;
-    }
-
-    .form-group {
-      margin-bottom: 16px;
-      text-align: left;
-    }
-
-    .form-group label {
-      display: block;
-      font-size: 12px;
-      color: var(--text-secondary);
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
-
-    .form-group input, .form-group textarea, .form-group select {
-      width: 100%;
-      padding: 12px 16px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text-primary);
-      font-size: 14px;
-      font-family: inherit;
-      transition: border-color 0.2s;
-    }
-
-    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
-      outline: none;
-      border-color: var(--gold);
-    }
-
-    .btn {
-      padding: 12px 24px;
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-      font-family: inherit;
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, var(--gold), var(--gold-dark));
-      color: #0F0A0C;
-      width: 100%;
-    }
-
-    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(212, 168, 83, 0.3); }
-
-    .btn-secondary {
-      background: var(--bg-card);
-      color: var(--text-primary);
-      border: 1px solid var(--border);
-    }
-
-    .btn-secondary:hover { border-color: var(--gold); }
-
-    .btn-danger {
-      background: rgba(248, 113, 113, 0.15);
-      color: var(--danger);
-      border: 1px solid rgba(248, 113, 113, 0.3);
-    }
-
-    .btn-sm { padding: 6px 12px; font-size: 12px; }
-
-    /* ==================== LAYOUT ==================== */
-    .app { display: flex; min-height: 100vh; }
-
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
     .sidebar {
-      width: 260px;
-      background: var(--bg-secondary);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      position: fixed;
-      top: 0;
-      left: 0;
-      bottom: 0;
-      z-index: 100;
+      position:fixed; left:0; top:0; bottom:0; width:260px; background:var(--bg2);
+      border-right:1px solid var(--border); padding:20px 0; z-index:100;
+      display:flex; flex-direction:column; transition:transform .3s;
     }
-
-    .sidebar-header {
-      padding: 24px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .sidebar-header h2 {
-      font-family: 'Playfair Display', serif;
-      color: var(--gold);
-      font-size: 22px;
-    }
-
-    .sidebar-header span {
-      font-size: 11px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 2px;
-    }
-
-    .sidebar-nav {
-      flex: 1;
-      padding: 16px 12px;
-    }
-
+    .sidebar-header { padding:0 20px 20px; border-bottom:1px solid var(--border); }
+    .sidebar-header h1 { font-size:20px; font-weight:800; background:linear-gradient(135deg,var(--gold),var(--gold2));
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+    .sidebar-header p { font-size:11px; color:var(--text3); margin-top:4px; letter-spacing:1px; text-transform:uppercase; }
+    .nav { flex:1; padding:12px 0; overflow-y:auto; }
+    .nav-section { padding:8px 20px 4px; font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:1.5px; font-weight:600; }
     .nav-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 16px;
-      border-radius: 8px;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: all 0.2s;
-      margin-bottom: 4px;
-      font-size: 14px;
+      display:flex; align-items:center; gap:12px; padding:10px 20px; cursor:pointer;
+      color:var(--text2); font-size:13px; font-weight:500; transition:all .2s;
+      border-left:3px solid transparent;
     }
-
-    .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
-    .nav-item.active { background: rgba(212, 168, 83, 0.1); color: var(--gold); border: 1px solid rgba(212, 168, 83, 0.2); }
-    .nav-item .icon { font-size: 18px; width: 24px; text-align: center; }
-
-    .sidebar-footer {
-      padding: 16px 24px;
-      border-top: 1px solid var(--border);
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-
-    .main {
-      flex: 1;
-      margin-left: 260px;
-      padding: 32px;
-    }
-
-    .page-header {
-      margin-bottom: 32px;
-    }
-
-    .page-header h1 {
-      font-family: 'Playfair Display', serif;
-      font-size: 28px;
-      color: var(--text-primary);
-      margin-bottom: 4px;
-    }
-
-    .page-header p {
-      color: var(--text-secondary);
-      font-size: 14px;
-    }
-
-    /* ==================== CARDS ==================== */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 32px;
-    }
-
+    .nav-item:hover { background:var(--bg3); color:var(--text); }
+    .nav-item.active { background:var(--bg3); color:var(--gold); border-left-color:var(--gold); }
+    .nav-item i { width:20px; text-align:center; font-size:14px; }
+    .sidebar-footer { padding:12px 20px; border-top:1px solid var(--border); }
+    .sidebar-footer .status { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--green); }
+    .sidebar-footer .dot { width:8px; height:8px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .main { margin-left:260px; padding:24px; min-height:100vh; }
+    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+    .page-header h2 { font-size:24px; font-weight:700; }
+    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:24px; }
     .stat-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-      transition: border-color 0.2s;
+      background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius);
+      padding:20px; transition:all .3s;
     }
-
-    .stat-card:hover { border-color: var(--border-light); }
-
-    .stat-card .label {
-      font-size: 12px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
+    .stat-card:hover { border-color:var(--gold3); transform:translateY(-2px); box-shadow:var(--shadow); }
+    .stat-card .label { font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:1px; font-weight:600; }
+    .stat-card .value { font-size:28px; font-weight:800; margin:8px 0 4px; }
+    .stat-card .change { font-size:12px; }
+    .stat-card .change.up { color:var(--green); }
+    .stat-card .icon { float:right; font-size:24px; opacity:.3; }
+    .panel {
+      background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius);
+      padding:20px; margin-bottom:20px;
     }
-
-    .stat-card .value {
-      font-size: 32px;
-      font-weight: 700;
-      color: var(--gold);
-      line-height: 1;
+    .panel-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+    .panel-title { font-size:16px; font-weight:700; }
+    .btn {
+      padding:8px 16px; border-radius:8px; border:none; cursor:pointer;
+      font-family:inherit; font-size:13px; font-weight:600; transition:all .2s;
+      display:inline-flex; align-items:center; gap:6px;
     }
-
-    .stat-card .change {
-      font-size: 12px;
-      margin-top: 8px;
+    .btn-gold { background:linear-gradient(135deg,var(--gold),var(--gold2)); color:var(--bg); }
+    .btn-gold:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(212,168,83,.3); }
+    .btn-outline { background:transparent; border:1px solid var(--border); color:var(--text2); }
+    .btn-outline:hover { border-color:var(--gold); color:var(--gold); }
+    .btn-sm { padding:5px 10px; font-size:11px; }
+    .btn-green { background:var(--green); color:var(--bg); }
+    .btn-blue { background:var(--blue); color:var(--bg); }
+    .btn-danger { background:var(--red); color:#fff; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { text-align:left; padding:10px 12px; color:var(--text3); font-size:11px; text-transform:uppercase;
+      letter-spacing:1px; border-bottom:1px solid var(--border); font-weight:600; }
+    td { padding:10px 12px; border-bottom:1px solid var(--border); }
+    tr:hover td { background:var(--bg3); }
+    .form-group { margin-bottom:16px; }
+    .form-label { display:block; font-size:12px; color:var(--text3); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; }
+    .form-input, .form-select, .form-textarea {
+      width:100%; padding:10px 14px; background:var(--bg3); border:1px solid var(--border);
+      border-radius:8px; color:var(--text); font-family:inherit; font-size:14px; transition:border .2s;
     }
-
-    .stat-card .change.up { color: var(--success); }
-    .stat-card .change.down { color: var(--danger); }
-
-    /* ==================== TABLE ==================== */
-    .card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-      margin-bottom: 24px;
+    .form-input:focus, .form-select:focus, .form-textarea:focus { outline:none; border-color:var(--gold); }
+    .form-textarea { min-height:100px; resize:vertical; }
+    .tag {
+      display:inline-flex; align-items:center; gap:4px; padding:3px 10px;
+      background:var(--bg4); border-radius:20px; font-size:11px; color:var(--text2); font-weight:500;
     }
-
-    .card-header {
-      padding: 20px 24px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+    .tag-gold { background:rgba(212,168,83,.15); color:var(--gold); }
+    .tag-green { background:rgba(74,222,128,.15); color:var(--green); }
+    .tag-red { background:rgba(248,113,113,.15); color:var(--red); }
+    .tag-blue { background:rgba(96,165,250,.15); color:var(--blue); }
+    .tag-purple { background:rgba(167,139,250,.15); color:var(--purple); }
+    .tag .remove { cursor:pointer; opacity:.6; }
+    .tag .remove:hover { opacity:1; }
+    .funnel-bar { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+    .funnel-label { width:160px; font-size:13px; font-weight:500; text-align:right; }
+    .funnel-track { flex:1; height:32px; background:var(--bg3); border-radius:6px; overflow:hidden; }
+    .funnel-fill { height:100%; border-radius:6px; transition:width .8s ease; display:flex; align-items:center; padding-left:12px;
+      font-size:12px; font-weight:700; color:var(--bg); min-width:40px; }
+    .funnel-count { font-size:13px; color:var(--text2); width:60px; }
+    .chart-container { position:relative; height:300px; }
+    .chart-container canvas { max-height:300px; }
+    .heatmap { display:grid; grid-template-columns:60px repeat(24,1fr); gap:2px; }
+    .heatmap-label { font-size:10px; color:var(--text3); display:flex; align-items:center; justify-content:flex-end; padding-right:8px; }
+    .heatmap-cell {
+      aspect-ratio:1; border-radius:3px; transition:all .2s; cursor:pointer;
+      display:flex; align-items:center; justify-content:center; font-size:8px; color:transparent;
     }
-
-    .card-header h3 {
-      font-size: 16px;
-      font-weight: 600;
-    }
-
-    .card-body { padding: 24px; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    th {
-      text-align: left;
-      padding: 12px 16px;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--border);
-      font-weight: 600;
-    }
-
-    td {
-      padding: 12px 16px;
-      font-size: 13px;
-      border-bottom: 1px solid rgba(58, 37, 48, 0.5);
-      color: var(--text-secondary);
-    }
-
-    tr:hover td { background: var(--bg-card-hover); }
-
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .badge-gold { background: rgba(212, 168, 83, 0.15); color: var(--gold); }
-    .badge-success { background: rgba(74, 222, 128, 0.15); color: var(--success); }
-    .badge-warning { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
-    .badge-danger { background: rgba(248, 113, 113, 0.15); color: var(--danger); }
-    .badge-info { background: rgba(96, 165, 250, 0.15); color: var(--info); }
-    .badge-muted { background: rgba(112, 96, 96, 0.15); color: var(--text-muted); }
-
-    /* ==================== FUNNEL ==================== */
-    .funnel {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .funnel-step {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-
-    .funnel-bar-container {
-      flex: 1;
-      height: 36px;
-      background: var(--bg-secondary);
-      border-radius: 8px;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .funnel-bar {
-      height: 100%;
-      background: linear-gradient(90deg, var(--burgundy), var(--gold-dark));
-      border-radius: 8px;
-      transition: width 0.6s ease;
-      min-width: 2px;
-    }
-
-    .funnel-label {
-      width: 160px;
-      font-size: 13px;
-      color: var(--text-secondary);
-      text-align: right;
-    }
-
-    .funnel-value {
-      width: 80px;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-
-    .funnel-pct {
-      width: 50px;
-      font-size: 12px;
-      color: var(--text-muted);
-      text-align: right;
-    }
-
-    /* ==================== FILTERS ==================== */
-    .filters {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 20px;
-      flex-wrap: wrap;
-    }
-
-    .filters input, .filters select {
-      padding: 8px 14px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text-primary);
-      font-size: 13px;
-      font-family: inherit;
-    }
-
-    .filters input:focus, .filters select:focus {
-      outline: none;
-      border-color: var(--gold);
-    }
-
-    /* ==================== MODAL ==================== */
+    .heatmap-cell:hover { transform:scale(1.3); z-index:1; color:var(--text); font-weight:700; }
+    .heatmap-header { font-size:9px; color:var(--text3); text-align:center; }
     .modal-overlay {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
+      position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:1000;
+      display:none; align-items:center; justify-content:center; padding:20px;
     }
-
+    .modal-overlay.show { display:flex; }
     .modal {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      width: 560px;
-      max-height: 80vh;
-      overflow-y: auto;
+      background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius);
+      padding:24px; width:100%; max-width:600px; max-height:80vh; overflow-y:auto;
     }
-
-    .modal-header {
-      padding: 24px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .modal-header h3 { font-size: 18px; }
-
-    .modal-close {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 24px;
-      cursor: pointer;
-    }
-
-    .modal-body { padding: 24px; }
-    .modal-footer {
-      padding: 16px 24px;
-      border-top: 1px solid var(--border);
-      display: flex;
-      gap: 12px;
-      justify-content: flex-end;
-    }
-
-    /* ==================== SCENARIO CHART ==================== */
-    .scenario-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-    }
-
-    .scenario-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px;
-      text-align: center;
-    }
-
-    .scenario-card .emoji { font-size: 32px; margin-bottom: 8px; }
-    .scenario-card .name { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
-    .scenario-card .count { font-size: 24px; font-weight: 700; color: var(--gold); }
-
-    /* ==================== BROADCAST ==================== */
-    .broadcast-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px;
-      border-bottom: 1px solid rgba(58, 37, 48, 0.5);
-    }
-
-    .broadcast-item:last-child { border-bottom: none; }
-
-    .broadcast-info h4 { font-size: 14px; margin-bottom: 4px; }
-    .broadcast-info p { font-size: 12px; color: var(--text-muted); }
-
-    .broadcast-stats {
-      display: flex;
-      gap: 16px;
-      align-items: center;
-    }
-
-    .broadcast-stat {
-      text-align: center;
-    }
-
-    .broadcast-stat .num { font-size: 16px; font-weight: 600; color: var(--gold); }
-    .broadcast-stat .lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
-
-    /* ==================== TOAST ==================== */
+    .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+    .modal-title { font-size:18px; font-weight:700; }
+    .modal-close { cursor:pointer; font-size:20px; color:var(--text3); background:none; border:none; }
+    .modal-close:hover { color:var(--text); }
     .toast {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      background: var(--bg-card);
-      border: 1px solid var(--gold);
-      border-radius: 10px;
-      padding: 16px 24px;
-      color: var(--text-primary);
-      font-size: 14px;
-      z-index: 2000;
-      animation: slideIn 0.3s ease;
+      position:fixed; bottom:24px; right:24px; padding:12px 20px; border-radius:8px;
+      background:var(--green); color:var(--bg); font-weight:600; font-size:13px;
+      z-index:2000; transform:translateY(100px); opacity:0; transition:all .3s;
     }
-
-    @keyframes slideIn {
-      from { transform: translateY(20px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
+    .toast.show { transform:translateY(0); opacity:1; }
+    .toast.error { background:var(--red); }
+    .mobile-toggle { display:none; position:fixed; top:12px; left:12px; z-index:200;
+      background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+      padding:8px 12px; color:var(--text); cursor:pointer; }
+    @media(max-width:768px) {
+      .sidebar { transform:translateX(-100%); }
+      .sidebar.open { transform:translateX(0); }
+      .main { margin-left:0; }
+      .mobile-toggle { display:block; }
+      .stats-grid { grid-template-columns:1fr 1fr; }
     }
-
-    /* ==================== RESPONSIVE ==================== */
-    @media (max-width: 768px) {
-      .sidebar { display: none; }
-      .main { margin-left: 0; padding: 16px; }
-      .stats-grid { grid-template-columns: repeat(2, 1fr); }
-      .scenario-grid { grid-template-columns: 1fr; }
-      .filters { flex-direction: column; }
-    }
-
-    /* ==================== LOADING ==================== */
-    .loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 60px;
-      color: var(--text-muted);
-    }
-
-    .spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid var(--border);
-      border-top-color: var(--gold);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-right: 12px;
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .empty-state {
-      text-align: center;
-      padding: 60px 20px;
-      color: var(--text-muted);
-    }
-
-    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
-    .empty-state p { font-size: 14px; }
+    .fade-in { animation:fadeIn .4s ease; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    ::-webkit-scrollbar { width:6px; }
+    ::-webkit-scrollbar-track { background:var(--bg); }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+    .section { display:none; }
+    .section.active { display:block; }
+    .progress { height:6px; background:var(--bg3); border-radius:3px; overflow:hidden; }
+    .progress-fill { height:100%; border-radius:3px; transition:width .5s; }
+    .copy-link { cursor:pointer; padding:4px 8px; background:var(--bg3); border-radius:4px; font-size:11px; font-family:monospace; word-break:break-all; }
+    .copy-link:hover { background:var(--bg4); }
+    .detail-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); }
+    .detail-label { color:var(--text3); font-size:12px; }
+    .detail-value { font-weight:500; font-size:13px; }
   </style>
 </head>
 <body>
-  <div id="app"></div>
+  <button class="mobile-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')"><i class="fas fa-bars"></i></button>
 
-  <script>
-    // ==================== STATE ====================
-    const state = {
-      token: localStorage.getItem('altyn_token'),
-      currentPage: 'dashboard',
-      stats: null,
-      funnel: null,
-      users: [],
-      broadcasts: [],
-      loading: false,
-      toast: null
-    };
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>✦ АЛТЫН</h1>
+      <p>Маркетинг Панель v2.0</p>
+    </div>
+    <nav class="nav">
+      <div class="nav-section">Главное</div>
+      <div class="nav-item active" data-page="dashboard"><i class="fas fa-chart-line"></i> Дашборд</div>
+      <div class="nav-item" data-page="funnel"><i class="fas fa-filter"></i> Воронка</div>
+      <div class="nav-item" data-page="analytics"><i class="fas fa-chart-bar"></i> Аналитика</div>
+      <div class="nav-section">Управление</div>
+      <div class="nav-item" data-page="users"><i class="fas fa-users"></i> Пользователи</div>
+      <div class="nav-item" data-page="broadcasts"><i class="fas fa-paper-plane"></i> Рассылки</div>
+      <div class="nav-item" data-page="templates"><i class="fas fa-file-alt"></i> Шаблоны</div>
+      <div class="nav-section">Маркетинг</div>
+      <div class="nav-item" data-page="utm"><i class="fas fa-link"></i> UTM-ссылки</div>
+      <div class="nav-item" data-page="referrals"><i class="fas fa-gift"></i> Рефералы</div>
+      <div class="nav-item" data-page="ab-testing"><i class="fas fa-flask"></i> A/B Тесты</div>
+      <div class="nav-section">Инсайты</div>
+      <div class="nav-item" data-page="heatmap"><i class="fas fa-fire"></i> Тепловая карта</div>
+      <div class="nav-item" data-page="cohorts"><i class="fas fa-layer-group"></i> Когорты</div>
+      <div class="nav-item" data-page="exit-survey"><i class="fas fa-door-open"></i> Exit-опрос</div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="status"><span class="dot"></span> Бот активен</div>
+    </div>
+  </aside>
 
-    const API = '/api';
+  <main class="main">
+    <!-- DASHBOARD -->
+    <section class="section active" id="page-dashboard">
+      <div class="page-header"><div><h2>📊 Дашборд</h2><p style="color:var(--text3);font-size:13px;margin-top:4px">Обзор системы в реальном времени</p></div>
+        <button class="btn btn-outline" onclick="loadDashboard()"><i class="fas fa-sync-alt"></i> Обновить</button></div>
+      <div class="stats-grid" id="stats-grid"></div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px">
+        <div class="panel"><div class="panel-header"><span class="panel-title">📈 Рост пользователей</span></div><div class="chart-container"><canvas id="chart-growth"></canvas></div></div>
+        <div class="panel"><div class="panel-header"><span class="panel-title">🎭 Сценарии</span></div><div class="chart-container"><canvas id="chart-scenarios"></canvas></div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="panel"><div class="panel-header"><span class="panel-title">📊 Источники трафика</span></div><div class="chart-container"><canvas id="chart-sources"></canvas></div></div>
+        <div class="panel"><div class="panel-header"><span class="panel-title">🔄 Конверсия по источникам</span></div><div id="conversion-by-source"></div></div>
+      </div>
+    </section>
 
-    // ==================== API HELPERS ====================
-    async function api(path, options = {}) {
-      const headers = { 'Content-Type': 'application/json' };
-      if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+    <!-- FUNNEL -->
+    <section class="section" id="page-funnel">
+      <div class="page-header"><h2>🔻 Воронка продаж</h2><button class="btn btn-outline" onclick="loadFunnel()"><i class="fas fa-sync-alt"></i></button></div>
+      <div class="panel" id="funnel-container"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="panel"><div class="panel-header"><span class="panel-title">⚡ Эффективность прогрева</span></div><div class="chart-container"><canvas id="chart-warmup"></canvas></div></div>
+        <div class="panel"><div class="panel-header"><span class="panel-title">🎯 Конверсия по сценариям</span></div><div id="scenario-conversion"></div></div>
+      </div>
+    </section>
 
-      const res = await fetch(`${API}${path}`, { ...options, headers });
-      if (res.status === 401) {
-        state.token = null;
-        localStorage.removeItem('altyn_token');
-        render();
-        return null;
-      }
-      return res.json();
-    }
+    <!-- ANALYTICS -->
+    <section class="section" id="page-analytics">
+      <div class="page-header"><h2>📈 Аналитика</h2>
+        <select class="form-select" style="width:auto" id="analytics-period" onchange="loadAnalytics()">
+          <option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option>
+        </select></div>
+      <div class="panel"><div class="panel-header"><span class="panel-title">📊 События по дням</span></div><div class="chart-container"><canvas id="chart-events"></canvas></div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="panel"><div class="panel-header"><span class="panel-title">📱 Источники</span></div><div id="sources-table"></div></div>
+        <div class="panel"><div class="panel-header"><span class="panel-title">🎭 Сценарии</span></div><div id="scenarios-table"></div></div>
+      </div>
+    </section>
 
-    // ==================== RENDER ====================
-    function render() {
-      const app = document.getElementById('app');
-      if (!state.token) {
-        app.innerHTML = renderLogin();
-      } else {
-        app.innerHTML = renderApp();
-      }
-      attachEvents();
-    }
-
-    function renderLogin() {
-      return `
-        <div class="login-screen">
-          <div class="login-box">
-            <h1>✦ Алтын</h1>
-            <p>Маркетинговая админ-панель</p>
-            <div class="form-group">
-              <label>Логин</label>
-              <input type="text" id="login-user" placeholder="admin" value="admin">
-            </div>
-            <div class="form-group">
-              <label>Пароль</label>
-              <input type="password" id="login-pass" placeholder="Введите пароль">
-            </div>
-            <button class="btn btn-primary" id="login-btn">Войти</button>
-            <p style="margin-top:16px;font-size:11px;color:var(--text-muted)">Первый вход создаст аккаунт администратора</p>
-          </div>
+    <!-- USERS -->
+    <section class="section" id="page-users">
+      <div class="page-header"><h2>👥 Пользователи</h2>
+        <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="exportCSV()"><i class="fas fa-download"></i> CSV</button><button class="btn btn-outline" onclick="loadUsers()"><i class="fas fa-sync-alt"></i></button></div></div>
+      <div class="panel" style="margin-bottom:16px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="form-input" style="width:200px" placeholder="🔍 Поиск..." id="user-search" onkeyup="if(event.key==='Enter')loadUsers()">
+          <select class="form-select" style="width:150px" id="filter-scenario" onchange="loadUsers()"><option value="">Все сценарии</option><option value="savior">Спасатель</option><option value="fear">Страх</option><option value="control">Контроль</option><option value="freeze">Замирание</option></select>
+          <select class="form-select" style="width:150px" id="filter-stage" onchange="loadUsers()"><option value="">Все этапы</option><option value="new">Новый</option><option value="started">Начал</option><option value="quiz">В квизе</option><option value="quiz_completed">Квиз ✓</option><option value="booking">Запись</option><option value="booked">Записан</option></select>
+          <select class="form-select" style="width:150px" id="filter-booking" onchange="loadUsers()"><option value="">Все статусы</option><option value="none">Не записан</option><option value="booked">Записан</option><option value="completed">Завершён</option></select>
         </div>
-      `;
-    }
+      </div>
+      <div class="panel"><div id="users-table"></div></div>
+    </section>
 
-    function renderApp() {
-      return `
-        <div class="app">
-          ${renderSidebar()}
-          <div class="main">
-            ${renderPage()}
-          </div>
-        </div>
-        ${state.toast ? `<div class="toast" id="toast">${state.toast}</div>` : ''}
-      `;
-    }
+    <!-- BROADCASTS -->
+    <section class="section" id="page-broadcasts">
+      <div class="page-header"><h2>📤 Рассылки</h2><button class="btn btn-gold" onclick="showModal('broadcast-modal');updateSegmentCount()"><i class="fas fa-plus"></i> Новая</button></div>
+      <div class="panel" id="broadcasts-table"></div>
+    </section>
 
-    function renderSidebar() {
-      const items = [
-        { id: 'dashboard', icon: '📊', label: 'Дашборд' },
-        { id: 'users', icon: '👥', label: 'Пользователи' },
-        { id: 'broadcasts', icon: '📢', label: 'Рассылки' },
-        { id: 'funnel', icon: '🔄', label: 'Воронка' },
-        { id: 'analytics', icon: '📈', label: 'Аналитика' }
-      ];
+    <!-- TEMPLATES -->
+    <section class="section" id="page-templates">
+      <div class="page-header"><h2>📝 Шаблоны</h2><button class="btn btn-gold" onclick="showModal('template-modal')"><i class="fas fa-plus"></i> Новый</button></div>
+      <div class="panel" id="templates-list"></div>
+    </section>
 
-      return `
-        <div class="sidebar">
-          <div class="sidebar-header">
-            <h2>✦ Алтын</h2>
-            <span>Админ-панель</span>
-          </div>
-          <div class="sidebar-nav">
-            ${items.map(i => `
-              <div class="nav-item ${state.currentPage === i.id ? 'active' : ''}" data-page="${i.id}">
-                <span class="icon">${i.icon}</span>
-                ${i.label}
-              </div>
-            `).join('')}
-          </div>
-          <div class="sidebar-footer">
-            <div class="nav-item" id="logout-btn">
-              <span class="icon">🚪</span>
-              Выйти
-            </div>
-          </div>
-        </div>
-      `;
-    }
+    <!-- UTM -->
+    <section class="section" id="page-utm">
+      <div class="page-header"><h2>🔗 UTM-ссылки</h2><button class="btn btn-gold" onclick="showUtmModal()"><i class="fas fa-plus"></i> Создать</button></div>
+      <div class="panel" id="utm-list"></div>
+    </section>
 
-    function renderPage() {
-      switch (state.currentPage) {
-        case 'dashboard': return renderDashboard();
-        case 'users': return renderUsers();
-        case 'broadcasts': return renderBroadcasts();
-        case 'funnel': return renderFunnel();
-        case 'analytics': return renderAnalytics();
-        default: return renderDashboard();
-      }
-    }
+    <!-- REFERRALS -->
+    <section class="section" id="page-referrals">
+      <div class="page-header"><h2>🎁 Рефералы</h2></div>
+      <div class="stats-grid" id="referral-stats"></div>
+      <div class="panel"><div class="panel-header"><span class="panel-title">🏆 Топ рефереров</span></div><div id="referrals-table"></div></div>
+    </section>
 
-    // ==================== DASHBOARD ====================
-    function renderDashboard() {
-      const s = state.stats;
-      if (!s) return `<div class="loading"><div class="spinner"></div>Загрузка...</div>`;
+    <!-- A/B -->
+    <section class="section" id="page-ab-testing">
+      <div class="page-header"><h2>🧪 A/B Тесты</h2><button class="btn btn-gold" onclick="showModal('ab-test-modal')"><i class="fas fa-plus"></i> Новый</button></div>
+      <div class="panel" id="ab-tests-list"><p style="color:var(--text3);text-align:center;padding:40px"><i class="fas fa-flask" style="font-size:40px;display:block;margin-bottom:12px;opacity:.3"></i>Создайте A/B тест для рассылки</p></div>
+    </section>
 
-      const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
+    <!-- HEATMAP -->
+    <section class="section" id="page-heatmap">
+      <div class="page-header"><h2>🔥 Тепловая карта</h2></div>
+      <div class="panel"><div class="panel-header"><span class="panel-title">Активность по часам (30 дней)</span></div><div id="heatmap-container" style="padding:12px"></div></div>
+    </section>
 
-      return `
-        <div class="page-header">
-          <h1>Дашборд</h1>
-          <p>Статистика Telegram-бота @altyntherapybot</p>
-        </div>
+    <!-- COHORTS -->
+    <section class="section" id="page-cohorts">
+      <div class="page-header"><h2>📊 Когорты</h2></div>
+      <div class="panel"><div class="panel-header"><span class="panel-title">Конверсия по неделям</span></div><div id="cohorts-table"></div></div>
+    </section>
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="label">Всего пользователей</div>
-            <div class="value">${s.total}</div>
-            <div class="change up">+${s.todayUsers} сегодня</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Квиз пройден</div>
-            <div class="value">${s.quizCompleted}</div>
-            <div class="change">${s.total ? Math.round(s.quizCompleted / s.total * 100) : 0}% конверсия</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">На прогреве</div>
-            <div class="value">${s.warmupActive}</div>
-            <div class="change">Получают серию</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Записались</div>
-            <div class="value">${s.booked}</div>
-            <div class="change up">${s.quizCompleted ? Math.round(s.booked / s.quizCompleted * 100) : 0}% от квиза</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">За неделю</div>
-            <div class="value">${s.weekUsers}</div>
-            <div class="change">Новых пользователей</div>
-          </div>
-        </div>
+    <!-- EXIT SURVEY -->
+    <section class="section" id="page-exit-survey">
+      <div class="page-header"><h2>🚪 Exit-опрос</h2></div>
+      <div class="stats-grid" id="exit-stats"></div>
+      <div class="panel"><div class="panel-header"><span class="panel-title">Причины отказа</span></div><div class="chart-container"><canvas id="chart-exit"></canvas></div></div>
+    </section>
+  </main>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
-          <div class="card">
-            <div class="card-header"><h3>Сценарии</h3></div>
-            <div class="card-body">
-              ${s.scenarios.length ? `
-                <div class="scenario-grid">
-                  ${s.scenarios.map(sc => `
-                    <div class="scenario-card">
-                      <div class="emoji">${(scenarioNames[sc.scenario] || sc.scenario).split(' ')[0]}</div>
-                      <div class="name">${(scenarioNames[sc.scenario] || sc.scenario).split(' ').slice(1).join(' ') || sc.scenario}</div>
-                      <div class="count">${sc.count}</div>
-                    </div>
-                  `).join('')}
-                </div>
-              ` : '<div class="empty-state"><div class="icon">🎭</div><p>Пока нет данных по сценариям</p></div>'}
-            </div>
-          </div>
+  <!-- MODALS -->
+  <div class="modal-overlay" id="broadcast-modal"><div class="modal">
+    <div class="modal-header"><span class="modal-title">📤 Новая рассылка</span><button class="modal-close" onclick="closeModal('broadcast-modal')">&times;</button></div>
+    <div class="form-group"><label class="form-label">Название</label><input class="form-input" id="bc-title" placeholder="Название рассылки"></div>
+    <div class="form-group"><label class="form-label">Текст (Markdown)</label><textarea class="form-textarea" id="bc-content" placeholder="*Жирный*, _курсив_"></textarea></div>
+    <div class="form-group"><label class="form-label">URL изображения</label><input class="form-input" id="bc-image" placeholder="https://..."></div>
+    <div class="form-group"><label class="form-label">Сегмент</label>
+      <select class="form-select" id="bc-segment" onchange="updateSegmentCount()">
+        <option value="all">Все</option><option value="quiz_completed">Прошли квиз</option><option value="warmup_active">На прогреве</option>
+        <option value="booked">Записались</option><option value="not_booked">Не записались</option><option value="new_users">Новые</option>
+        <option value="inactive">Неактивные</option><option value="scenario_savior">Спасатель</option><option value="scenario_fear">Страх</option>
+        <option value="scenario_control">Контроль</option><option value="scenario_freeze">Замирание</option>
+      </select><div style="margin-top:6px;font-size:12px;color:var(--text3)" id="segment-count"></div></div>
+    <div class="form-group"><label class="form-label">Запланировать</label><input class="form-input" type="datetime-local" id="bc-schedule"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-outline" onclick="closeModal('broadcast-modal')">Отмена</button>
+      <button class="btn btn-outline" onclick="saveBroadcast('draft')">💾 Черновик</button>
+      <button class="btn btn-gold" onclick="saveBroadcast('send')">📤 Отправить</button>
+    </div>
+  </div></div>
 
-          <div class="card">
-            <div class="card-header"><h3>Этапы воронки</h3></div>
-            <div class="card-body">
-              ${s.stages.length ? `
-                <div class="funnel">
-                  ${s.stages.map(st => {
-                    const stageNames = { new: 'Новые', started: 'Начали', quiz: 'В квизе', quiz_completed: 'Квиз пройден', booking: 'Запись', booked: 'Записались', completed: 'Завершили' };
-                    const pct = s.total ? Math.round(st.count / s.total * 100) : 0;
-                    return `
-                      <div class="funnel-step">
-                        <div class="funnel-label">${stageNames[st.funnel_stage] || st.funnel_stage}</div>
-                        <div class="funnel-bar-container">
-                          <div class="funnel-bar" style="width:${Math.max(pct, 2)}%"></div>
-                        </div>
-                        <div class="funnel-value">${st.count}</div>
-                        <div class="funnel-pct">${pct}%</div>
-                      </div>
-                    `;
-                  }).join('')}
-                </div>
-              ` : '<div class="empty-state"><div class="icon">🔄</div><p>Пока нет данных</p></div>'}
-            </div>
-          </div>
-        </div>
-      `;
-    }
+  <div class="modal-overlay" id="template-modal"><div class="modal">
+    <div class="modal-header"><span class="modal-title">📝 Новый шаблон</span><button class="modal-close" onclick="closeModal('template-modal')">&times;</button></div>
+    <div class="form-group"><label class="form-label">Название</label><input class="form-input" id="tpl-name" placeholder="Приглашение на вебинар"></div>
+    <div class="form-group"><label class="form-label">Категория</label><select class="form-select" id="tpl-category"><option value="promo">Промо</option><option value="warmup">Прогрев</option><option value="reminder">Напоминание</option><option value="event">Мероприятие</option></select></div>
+    <div class="form-group"><label class="form-label">Текст</label><textarea class="form-textarea" id="tpl-content" placeholder="Текст шаблона..."></textarea></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-outline" onclick="closeModal('template-modal')">Отмена</button><button class="btn btn-gold" onclick="saveTemplate()">💾 Сохранить</button></div>
+  </div></div>
 
-    // ==================== USERS ====================
-    function renderUsers() {
-      return `
-        <div class="page-header">
-          <h1>Пользователи</h1>
-          <p>Все пользователи Telegram-бота</p>
-        </div>
+  <div class="modal-overlay" id="utm-modal"><div class="modal">
+    <div class="modal-header"><span class="modal-title">🔗 UTM-ссылка</span><button class="modal-close" onclick="closeModal('utm-modal')">&times;</button></div>
+    <div class="form-group"><label class="form-label">Название</label><input class="form-input" id="utm-name" placeholder="Instagram Reels март"></div>
+    <div class="form-group"><label class="form-label">Источник</label><select class="form-select" id="utm-source" onchange="updateUtmPreview()"><option value="instagram">Instagram</option><option value="facebook">Facebook</option><option value="youtube">YouTube</option><option value="tiktok">TikTok</option><option value="google">Google Ads</option><option value="telegram">Telegram</option><option value="website">Сайт</option></select></div>
+    <div class="form-group"><label class="form-label">Канал</label><input class="form-input" id="utm-medium" placeholder="stories, reels, post..." oninput="updateUtmPreview()"></div>
+    <div class="form-group"><label class="form-label">Кампания</label><input class="form-input" id="utm-campaign" placeholder="spring2024, promo..." oninput="updateUtmPreview()"></div>
+    <div class="form-group"><label class="form-label">Ссылка</label><div class="copy-link" id="utm-preview" style="padding:12px">—</div></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-outline" onclick="closeModal('utm-modal')">Отмена</button><button class="btn btn-gold" onclick="saveUtmLink()">💾 Создать</button></div>
+  </div></div>
 
-        <div class="filters">
-          <input type="text" id="filter-search" placeholder="🔍 Поиск по имени..." value="">
-          <select id="filter-scenario">
-            <option value="">Все сценарии</option>
-            <option value="savior">🛡 Спасатель</option>
-            <option value="fear">💔 Страх</option>
-            <option value="control">🎯 Контроль</option>
-            <option value="freeze">❄️ Заморозка</option>
-          </select>
-          <select id="filter-stage">
-            <option value="">Все этапы</option>
-            <option value="new">Новые</option>
-            <option value="started">Начали</option>
-            <option value="quiz">В квизе</option>
-            <option value="quiz_completed">Квиз пройден</option>
-            <option value="booking">Запись</option>
-            <option value="booked">Записались</option>
-          </select>
-          <select id="filter-booking">
-            <option value="">Все статусы</option>
-            <option value="none">Без записи</option>
-            <option value="booked">Записан</option>
-            <option value="completed">Завершён</option>
-            <option value="cancelled">Отменён</option>
-          </select>
-          <button class="btn btn-secondary btn-sm" id="filter-apply">Применить</button>
-        </div>
+  <div class="modal-overlay" id="ab-test-modal"><div class="modal">
+    <div class="modal-header"><span class="modal-title">🧪 A/B Тест</span><button class="modal-close" onclick="closeModal('ab-test-modal')">&times;</button></div>
+    <div class="form-group"><label class="form-label">Название</label><input class="form-input" id="ab-title" placeholder="Тест заголовка"></div>
+    <div class="form-group"><label class="form-label">Сегмент</label><select class="form-select" id="ab-segment"><option value="all">Все</option><option value="quiz_completed">Прошли квиз</option><option value="not_booked">Не записались</option></select></div>
+    <div class="panel" style="background:var(--bg3)"><strong style="font-size:13px">Вариант A</strong><textarea class="form-textarea" id="ab-content-a" style="margin-top:8px" placeholder="Текст A..."></textarea></div>
+    <div class="panel" style="background:var(--bg3)"><strong style="font-size:13px">Вариант B</strong><textarea class="form-textarea" id="ab-content-b" style="margin-top:8px" placeholder="Текст B..."></textarea></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-outline" onclick="closeModal('ab-test-modal')">Отмена</button><button class="btn btn-gold" onclick="createAbTest()">🧪 Создать</button></div>
+  </div></div>
 
-        <div class="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Пользователь</th>
-                <th>Сценарий</th>
-                <th>Этап</th>
-                <th>Запись</th>
-                <th>Прогрев</th>
-                <th>Дата</th>
-                <th>Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${state.users.length ? state.users.map(u => {
-                const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
-                const stageNames = { new: 'Новый', started: 'Начал', quiz: 'В квизе', quiz_completed: 'Квиз ✓', booking: 'Запись', booked: 'Записан', completed: 'Завершён' };
-                const bookingBadge = { none: 'badge-muted', booked: 'badge-gold', completed: 'badge-success', cancelled: 'badge-danger' };
-                const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || 'Аноним';
-                return `
-                  <tr>
-                    <td>
-                      <strong>${name}</strong><br>
-                      <span style="font-size:11px;color:var(--text-muted)">${u.username ? '@' + u.username : 'ID: ' + u.telegram_id}</span>
-                    </td>
-                    <td>${u.scenario ? `<span class="badge badge-info">${scenarioNames[u.scenario] || u.scenario}</span>` : '—'}</td>
-                    <td><span class="badge badge-gold">${stageNames[u.funnel_stage] || u.funnel_stage}</span></td>
-                    <td><span class="badge ${bookingBadge[u.booking_status] || 'badge-muted'}">${u.booking_status || 'none'}</span></td>
-                    <td>${u.warmup_active ? `День ${u.warmup_day || 0}` : '—'}</td>
-                    <td style="font-size:12px">${new Date(u.created_at).toLocaleDateString('ru')}</td>
-                    <td>
-                      <button class="btn btn-secondary btn-sm user-detail-btn" data-id="${u.telegram_id}">👁</button>
-                    </td>
-                  </tr>
-                `;
-              }).join('') : `
-                <tr><td colspan="7">
-                  <div class="empty-state"><div class="icon">👥</div><p>Пока нет пользователей</p></div>
-                </td></tr>
-              `}
-            </tbody>
-          </table>
-        </div>
-      `;
-    }
+  <div class="modal-overlay" id="user-modal"><div class="modal" style="max-width:700px">
+    <div class="modal-header"><span class="modal-title">👤 Карточка</span><button class="modal-close" onclick="closeModal('user-modal')">&times;</button></div>
+    <div id="user-detail-content"></div>
+  </div></div>
 
-    // ==================== BROADCASTS ====================
-    function renderBroadcasts() {
-      return `
-        <div class="page-header">
-          <h1>Рассылки</h1>
-          <p>Массовые рассылки по сегментам аудитории</p>
-        </div>
+  <div class="toast" id="toast"></div>
 
-        <button class="btn btn-primary" id="new-broadcast-btn" style="margin-bottom:24px">+ Новая рассылка</button>
+  <div id="login-screen" style="position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center">
+    <div style="text-align:center;width:320px">
+      <h1 style="font-size:32px;font-weight:800;background:linear-gradient(135deg,var(--gold),var(--gold2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px">✦ АЛТЫН</h1>
+      <p style="color:var(--text3);margin-bottom:32px;font-size:13px">Маркетинг Панель v2.0</p>
+      <input class="form-input" id="login-user" placeholder="Логин" value="admin" style="margin-bottom:12px">
+      <input class="form-input" id="login-pass" placeholder="Пароль" type="password" style="margin-bottom:16px" onkeydown="if(event.key==='Enter')doLogin()">
+      <button class="btn btn-gold" style="width:100%;padding:12px" onclick="doLogin()">Войти</button>
+      <p id="login-error" style="color:var(--red);font-size:12px;margin-top:12px;display:none"></p>
+    </div>
+  </div>
 
-        <div class="card">
-          ${state.broadcasts.length ? state.broadcasts.map(b => `
-            <div class="broadcast-item">
-              <div class="broadcast-info">
-                <h4>${b.title}</h4>
-                <p>Сегмент: ${b.segment} | ${new Date(b.created_at).toLocaleDateString('ru')}</p>
-              </div>
-              <div class="broadcast-stats">
-                <div class="broadcast-stat">
-                  <div class="num">${b.sent_count}</div>
-                  <div class="lbl">Отправлено</div>
-                </div>
-                <div class="broadcast-stat">
-                  <div class="num">${b.failed_count}</div>
-                  <div class="lbl">Ошибки</div>
-                </div>
-                <span class="badge ${b.status === 'sent' ? 'badge-success' : b.status === 'sending' ? 'badge-warning' : 'badge-muted'}">${b.status}</span>
-                ${b.status === 'draft' ? `<button class="btn btn-primary btn-sm send-broadcast-btn" data-id="${b.id}">Отправить</button>` : ''}
-              </div>
-            </div>
-          `).join('') : `
-            <div class="empty-state" style="padding:40px"><div class="icon">📢</div><p>Нет рассылок. Создайте первую!</p></div>
-          `}
-        </div>
+<script>
+let TOKEN=localStorage.getItem('altyn_token');const API='/api';let charts={};
 
-        <div id="broadcast-modal"></div>
-      `;
-    }
+async function doLogin(){
+  const u=document.getElementById('login-user').value,p=document.getElementById('login-pass').value;
+  try{const r=await fetch(`${API}/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const d=await r.json();if(d.token){TOKEN=d.token;localStorage.setItem('altyn_token',TOKEN);document.getElementById('login-screen').style.display='none';initApp()}
+  else{document.getElementById('login-error').textContent=d.error||'Ошибка';document.getElementById('login-error').style.display='block'}}catch(e){document.getElementById('login-error').textContent='Ошибка соединения';document.getElementById('login-error').style.display='block'}}
 
-    // ==================== FUNNEL ====================
-    function renderFunnel() {
-      const f = state.funnel;
-      if (!f) return `<div class="loading"><div class="spinner"></div>Загрузка воронки...</div>`;
+async function api(path,opts={}){const r=await fetch(`${API}${path}`,{...opts,headers:{'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json',...(opts.headers||{})}});
+if(r.status===401){localStorage.removeItem('altyn_token');location.reload();return null}if(r.headers.get('content-type')?.includes('text/csv'))return r;return r.json()}
 
-      return `
-        <div class="page-header">
-          <h1>Воронка продаж</h1>
-          <p>Конверсия на каждом этапе</p>
-        </div>
+function initApp(){setupNav();loadDashboard()}
+if(TOKEN){fetch(`${API}/auth/me`,{headers:{'Authorization':`Bearer ${TOKEN}`}}).then(r=>{if(r.ok){document.getElementById('login-screen').style.display='none';initApp()}}).catch(()=>{})}
 
-        <div class="card">
-          <div class="card-body">
-            <div class="funnel">
-              ${f.funnel.map((step, i) => {
-                const colors = ['#D4A853', '#E8C97A', '#D4A0A0', '#A07070', '#8B2D4A', '#6B1D3A', '#4A1528'];
-                return `
-                  <div class="funnel-step">
-                    <div class="funnel-label">${step.stage}</div>
-                    <div class="funnel-bar-container">
-                      <div class="funnel-bar" style="width:${Math.max(step.pct, 2)}%;background:${colors[i] || colors[0]}"></div>
-                    </div>
-                    <div class="funnel-value">${step.count}</div>
-                    <div class="funnel-pct">${step.pct}%</div>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          </div>
-        </div>
+function setupNav(){document.querySelectorAll('.nav-item').forEach(item=>{item.addEventListener('click',()=>{
+  document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));item.classList.add('active');
+  const p=item.dataset.page;document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.getElementById(`page-${p}`).classList.add('active');document.querySelector('.sidebar').classList.remove('open');
+  const L={dashboard:loadDashboard,funnel:loadFunnel,analytics:loadAnalytics,users:loadUsers,broadcasts:loadBroadcasts,
+    templates:loadTemplates,utm:loadUtmLinks,referrals:loadReferrals,heatmap:loadHeatmap,cohorts:loadCohorts,'exit-survey':loadExitSurvey,'ab-testing':loadAbTests};
+  if(L[p])L[p]()})})}
 
-        <div class="card" style="margin-top:24px">
-          <div class="card-header"><h3>Расчёт конверсий</h3></div>
-          <div class="card-body">
-            <table>
-              <thead>
-                <tr><th>Переход</th><th>Конверсия</th><th>Потери</th></tr>
-              </thead>
-              <tbody>
-                ${f.funnel.slice(1).map((step, i) => {
-                  const prev = f.funnel[i];
-                  const conv = prev.count ? Math.round(step.count / prev.count * 100) : 0;
-                  const loss = prev.count - step.count;
-                  return `
-                    <tr>
-                      <td>${prev.stage} → ${step.stage}</td>
-                      <td><span class="badge badge-gold">${conv}%</span></td>
-                      <td><span style="color:var(--danger)">${loss > 0 ? '-' + loss : '0'}</span></td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
-    }
+async function loadDashboard(){
+  const s=await api('/dashboard');if(!s)return;
+  document.getElementById('stats-grid').innerHTML=`
+    <div class="stat-card"><i class="fas fa-users icon"></i><div class="label">Всего</div><div class="value">${s.total}</div><div class="change up">+${s.weekUsers} за неделю</div></div>
+    <div class="stat-card"><i class="fas fa-check-circle icon"></i><div class="label">Квиз пройден</div><div class="value">${s.quizCompleted}</div><div class="change">${s.quizCompletionRate}%</div></div>
+    <div class="stat-card"><i class="fas fa-calendar-check icon"></i><div class="label">Записались</div><div class="value" style="color:var(--green)">${s.booked}</div><div class="change up">${s.bookingRate}% CR</div></div>
+    <div class="stat-card"><i class="fas fa-percentage icon"></i><div class="label">Общая CR</div><div class="value" style="color:var(--gold)">${s.conversionRate}%</div></div>
+    <div class="stat-card"><i class="fas fa-fire icon"></i><div class="label">На прогреве</div><div class="value">${s.warmupActive}</div></div>
+    <div class="stat-card"><i class="fas fa-calendar-day icon"></i><div class="label">Сегодня</div><div class="value" style="color:var(--cyan)">${s.todayUsers}</div></div>`;
+  if(s.dailyStats?.length)renderChart('chart-growth','line',{labels:s.dailyStats.map(d=>d.date.slice(5)),datasets:[{label:'Новые',data:s.dailyStats.map(d=>d.count),borderColor:'#d4a853',backgroundColor:'rgba(212,168,83,0.1)',fill:true,tension:.4,pointRadius:3}]});
+  if(s.scenarios?.length){const c={savior:'#60a5fa',fear:'#f87171',control:'#fb923c',freeze:'#a78bfa'},n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+    renderChart('chart-scenarios','doughnut',{labels:s.scenarios.map(x=>n[x.scenario]||x.scenario),datasets:[{data:s.scenarios.map(x=>x.count),backgroundColor:s.scenarios.map(x=>c[x.scenario]||'#666')}]},{plugins:{legend:{position:'bottom',labels:{color:'#9898b0',font:{size:11}}}}})}
+  if(s.sources?.length)renderChart('chart-sources','bar',{labels:s.sources.map(x=>x.source),datasets:[{label:'Пользователи',data:s.sources.map(x=>x.count),backgroundColor:['#d4a853','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c']}]});
+  const cv=await api('/analytics/conversion-by-source');
+  if(cv?.length)document.getElementById('conversion-by-source').innerHTML=`<table><thead><tr><th>Источник</th><th>Всего</th><th>Квиз</th><th>Запись</th><th>CR</th></tr></thead>
+    <tbody>${cv.map(x=>`<tr><td><span class="tag tag-blue">${x.source}</span></td><td>${x.total}</td><td>${x.quiz_done}</td><td>${x.booked}</td><td><span class="tag ${x.conversion_rate>10?'tag-green':'tag-gold'}">${x.conversion_rate}%</span></td></tr>`).join('')}</tbody></table>`}
 
-    // ==================== ANALYTICS ====================
-    function renderAnalytics() {
-      const s = state.stats;
-      if (!s) return `<div class="loading"><div class="spinner"></div>Загрузка...</div>`;
+async function loadFunnel(){
+  const d=await api('/dashboard/funnel');if(!d)return;
+  const colors=['#60a5fa','#22d3ee','#4ade80','#d4a853','#fb923c','#f472b6','#a78bfa'];
+  document.getElementById('funnel-container').innerHTML=d.funnel.map((f,i)=>`<div class="funnel-bar"><div class="funnel-label">${f.stage}</div><div class="funnel-track"><div class="funnel-fill" style="width:${Math.max(f.pct,3)}%;background:${colors[i]}">${f.pct}%</div></div><div class="funnel-count">${f.count}</div></div>`).join('');
+  const w=await api('/analytics/warmup-effectiveness');
+  if(w?.length)renderChart('chart-warmup','bar',{labels:w.map(x=>`День ${x.warmup_day}`),datasets:[{label:'Всего',data:w.map(x=>x.total),backgroundColor:'rgba(96,165,250,0.5)'},{label:'Конверсия',data:w.map(x=>x.converted),backgroundColor:'rgba(74,222,128,0.8)'}]});
+  const sc=await api('/analytics/scenarios');
+  if(sc?.length){const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+    document.getElementById('scenario-conversion').innerHTML=sc.map(s=>{const r=s.count>0?Math.round(s.booked/s.count*100):0;return`<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:600">${n[s.scenario]||s.scenario}</span><span style="font-size:12px;color:var(--text3)">${s.booked}/${s.count} (${r}%)</span></div><div class="progress"><div class="progress-fill" style="width:${r}%;background:var(--gold)"></div></div></div>`}).join('')}}
 
-      return `
-        <div class="page-header">
-          <h1>Аналитика</h1>
-          <p>Подробная аналитика по боту и воронке</p>
-        </div>
+async function loadAnalytics(){
+  const days=document.getElementById('analytics-period').value;
+  const ev=await api(`/analytics/events?days=${days}`);
+  if(ev?.length){const types=[...new Set(ev.map(e=>e.event_type))],dates=[...new Set(ev.map(e=>e.date))].sort(),colors=['#d4a853','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c','#22d3ee'];
+    renderChart('chart-events','line',{labels:dates.map(d=>d.slice(5)),datasets:types.slice(0,7).map((t,i)=>({label:t,data:dates.map(d=>ev.find(e=>e.event_type===t&&e.date===d)?.count||0),borderColor:colors[i],tension:.3,pointRadius:2}))})}
+  const src=await api('/analytics/conversion-by-source');
+  if(src?.length)document.getElementById('sources-table').innerHTML=`<table><thead><tr><th>Источник</th><th>Всего</th><th>Квиз</th><th>Запись</th><th>CR</th></tr></thead><tbody>${src.map(s=>`<tr><td>${s.source}</td><td>${s.total}</td><td>${s.quiz_done}</td><td>${s.booked}</td><td><span class="tag tag-gold">${s.conversion_rate}%</span></td></tr>`).join('')}</tbody></table>`;
+  const sc=await api('/analytics/scenarios');
+  if(sc?.length){const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+    document.getElementById('scenarios-table').innerHTML=`<table><thead><tr><th>Сценарий</th><th>Всего</th><th>Запись</th><th>Ср.день</th></tr></thead><tbody>${sc.map(s=>`<tr><td>${n[s.scenario]||s.scenario}</td><td>${s.count}</td><td>${s.booked}</td><td>${s.avg_warmup_day?s.avg_warmup_day.toFixed(1):'—'}</td></tr>`).join('')}</tbody></table>`}}
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="label">Конверсия в квиз</div>
-            <div class="value">${s.total ? Math.round(s.quizCompleted / s.total * 100) : 0}%</div>
-            <div class="change">от всех пользователей</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Конверсия в запись</div>
-            <div class="value">${s.quizCompleted ? Math.round(s.booked / s.quizCompleted * 100) : 0}%</div>
-            <div class="change">от прошедших квиз</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Средний прогрев</div>
-            <div class="value">${s.warmupActive || 0}</div>
-            <div class="change">активных серий</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Потенциальный доход</div>
-            <div class="value">$${(s.booked || 0) * 1000}</div>
-            <div class="change">${s.booked || 0} × $1000 за пакет</div>
-          </div>
-        </div>
+async function loadUsers(){
+  const p=new URLSearchParams(),se=document.getElementById('user-search').value,sc=document.getElementById('filter-scenario').value,st=document.getElementById('filter-stage').value,bk=document.getElementById('filter-booking').value;
+  if(se)p.set('search',se);if(sc)p.set('scenario',sc);if(st)p.set('funnel_stage',st);if(bk)p.set('booking_status',bk);p.set('limit','100');
+  const d=await api(`/users?${p}`);if(!d)return;
+  const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'},sn={new:'Новый',started:'Начал',quiz:'В квизе',quiz_completed:'Квиз ✓',booking:'Запись',booked:'Записан',completed:'Готово'},
+    sc2={new:'',started:'tag-blue',quiz:'tag-purple',quiz_completed:'tag-gold',booking:'tag-gold',booked:'tag-green',completed:'tag-green'};
+  document.getElementById('users-table').innerHTML=`<div style="margin-bottom:8px;font-size:12px;color:var(--text3)">Найдено: ${d.total}</div>
+    <table><thead><tr><th>Пользователь</th><th>Сценарий</th><th>Этап</th><th>Статус</th><th>Источник</th><th>Дата</th><th></th></tr></thead>
+    <tbody>${d.users.map(u=>`<tr><td><strong>${u.first_name||''} ${u.last_name||''}</strong><br><span style="color:var(--text3);font-size:11px">${u.username?'@'+u.username:u.telegram_id}</span></td>
+      <td>${u.scenario?`<span class="tag tag-purple">${n[u.scenario]||u.scenario}</span>`:'—'}</td>
+      <td><span class="tag ${sc2[u.funnel_stage]||''}">${sn[u.funnel_stage]||u.funnel_stage}</span></td>
+      <td>${u.booking_status==='booked'?'<span class="tag tag-green">✓</span>':u.booking_status==='completed'?'<span class="tag tag-green">✓✓</span>':'—'}</td>
+      <td style="font-size:11px;color:var(--text3)">${u.source||'—'}</td>
+      <td style="font-size:11px;color:var(--text3)">${u.created_at?.slice(0,10)||''}</td>
+      <td><button class="btn btn-sm btn-outline" onclick="showUserDetail(${u.telegram_id})">👁</button></td></tr>`).join('')}</tbody></table>`}
 
-        <div class="card">
-          <div class="card-header"><h3>Новые пользователи по дням</h3></div>
-          <div class="card-body">
-            ${s.dailyStats.length ? `
-              <div style="display:flex;align-items:flex-end;gap:4px;height:200px;padding:20px 0;">
-                ${s.dailyStats.map(d => {
-                  const max = Math.max(...s.dailyStats.map(x => x.count), 1);
-                  const h = Math.max(d.count / max * 160, 4);
-                  return `
-                    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
-                      <span style="font-size:10px;color:var(--text-muted)">${d.count}</span>
-                      <div style="width:100%;height:${h}px;background:linear-gradient(to top,var(--burgundy),var(--gold));border-radius:4px 4px 0 0;"></div>
-                      <span style="font-size:9px;color:var(--text-muted);transform:rotate(-45deg);white-space:nowrap">${d.date.slice(5)}</span>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            ` : '<div class="empty-state"><div class="icon">📈</div><p>Пока нет данных для графика</p></div>'}
-          </div>
-        </div>
+async function showUserDetail(tid){
+  const u=await api(`/users/${tid}`);if(!u)return;
+  const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};let tags=[];try{tags=JSON.parse(u.tags||'[]')}catch(e){}
+  document.getElementById('user-detail-content').innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="panel"><div class="panel-title" style="margin-bottom:12px">📋 Информация</div>
+        <div class="detail-row"><span class="detail-label">Имя</span><span class="detail-value">${u.first_name||''} ${u.last_name||''}</span></div>
+        <div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">${u.username?'@'+u.username:'—'}</span></div>
+        <div class="detail-row"><span class="detail-label">ID</span><span class="detail-value">${u.telegram_id}</span></div>
+        <div class="detail-row"><span class="detail-label">Источник</span><span class="detail-value"><span class="tag tag-blue">${u.source||'organic'}</span></span></div>
+        <div class="detail-row"><span class="detail-label">UTM</span><span class="detail-value" style="font-size:11px">${[u.utm_source,u.utm_medium,u.utm_campaign].filter(Boolean).join(' / ')||'—'}</span></div>
+        <div class="detail-row"><span class="detail-label">Дата</span><span class="detail-value">${u.created_at?.slice(0,16)||''}</span></div></div>
+      <div class="panel"><div class="panel-title" style="margin-bottom:12px">🎯 Воронка</div>
+        <div class="detail-row"><span class="detail-label">Сценарий</span><span class="detail-value"><span class="tag tag-purple">${n[u.scenario]||u.scenario||'—'}</span></span></div>
+        <div class="detail-row"><span class="detail-label">Этап</span><span class="detail-value"><span class="tag tag-gold">${u.funnel_stage}</span></span></div>
+        <div class="detail-row"><span class="detail-label">День прогрева</span><span class="detail-value">${u.warmup_day||0}</span></div>
+        <div class="detail-row"><span class="detail-label">Прогрев</span><span class="detail-value">${u.warmup_active?'✅':'❌'}</span></div>
+        <div class="detail-row"><span class="detail-label">Запись</span><span class="detail-value">${u.booking_status==='booked'?'✅ Записан':u.booking_status==='completed'?'✅ Завершён':'—'}</span></div>
+        ${u.booking_name?`<div class="detail-row"><span class="detail-label">Имя</span><span class="detail-value">${u.booking_name}</span></div>`:''}
+        ${u.booking_request?`<div class="detail-row"><span class="detail-label">Запрос</span><span class="detail-value">${u.booking_request}</span></div>`:''}
+        ${u.exit_reason?`<div class="detail-row"><span class="detail-label">Отказ</span><span class="detail-value"><span class="tag tag-red">${u.exit_reason}</span></span></div>`:''}</div>
+      <div class="panel" style="grid-column:1/-1"><div class="panel-title" style="margin-bottom:12px">🏷 Теги</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tags.map(t=>`<span class="tag tag-gold">${t} <span class="remove" onclick="removeTag(${u.telegram_id},'${t}')">&times;</span></span>`).join('')}${tags.length===0?'<span style="color:var(--text3);font-size:12px">Нет тегов</span>':''}</div>
+        <div style="display:flex;gap:8px"><input class="form-input" id="new-tag-input" placeholder="Новый тег..." style="flex:1"><button class="btn btn-sm btn-gold" onclick="addTag(${u.telegram_id})">+</button></div></div>
+      <div class="panel" style="grid-column:1/-1"><div class="panel-title" style="margin-bottom:12px">📝 Заметки</div>
+        <textarea class="form-textarea" id="user-notes" style="min-height:60px">${u.notes||''}</textarea>
+        <button class="btn btn-sm btn-gold" style="margin-top:8px" onclick="saveNotes(${u.telegram_id})">💾 Сохранить</button></div>
+      <div class="panel" style="grid-column:1/-1"><div class="panel-title" style="margin-bottom:12px">📨 Сообщения</div>
+        <div style="max-height:200px;overflow-y:auto">${(u.messages||[]).slice(0,20).map(m=>`<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <span style="color:${m.direction==='in'?'var(--blue)':'var(--green)'}">${m.direction==='in'?'📥':'📤'}</span>
+          <span style="color:var(--text3);width:60px">${m.message_type}</span><span style="flex:1">${(m.content||'').slice(0,80)}</span>
+          <span style="color:var(--text3)">${m.created_at?.slice(5,16)||''}</span></div>`).join('')}</div></div>
+      <div class="panel" style="grid-column:1/-1"><div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-green" onclick="updateUserStatus(${u.telegram_id},'booking_status','booked')">✅ Записан</button>
+        <button class="btn btn-sm btn-blue" onclick="updateUserStatus(${u.telegram_id},'booking_status','completed')">✓ Завершён</button>
+        <button class="btn btn-sm btn-outline" onclick="updateUserStatus(${u.telegram_id},'warmup_active',${u.warmup_active?0:1})">${u.warmup_active?'⏸ Стоп прогрев':'▶️ Вкл прогрев'}</button></div></div>
+    </div>`;showModal('user-modal')}
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
-          <div class="card">
-            <div class="card-header"><h3>Источники трафика</h3></div>
-            <div class="card-body" id="sources-container">
-              <div class="loading"><div class="spinner"></div></div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-header"><h3>Распределение сценариев</h3></div>
-            <div class="card-body" id="scenarios-container">
-              <div class="loading"><div class="spinner"></div></div>
-            </div>
-          </div>
-        </div>
-      `;
-    }
+async function addTag(tid){const t=document.getElementById('new-tag-input').value.trim();if(!t)return;await api(`/users/${tid}/tags`,{method:'POST',body:JSON.stringify({tag:t})});showUserDetail(tid);toast('Тег добавлен')}
+async function removeTag(tid,tag){await api(`/users/${tid}/tags/${tag}`,{method:'DELETE'});showUserDetail(tid);toast('Тег удалён')}
+async function saveNotes(tid){await api(`/users/${tid}`,{method:'PUT',body:JSON.stringify({notes:document.getElementById('user-notes').value})});toast('Сохранено')}
+async function updateUserStatus(tid,f,v){await api(`/users/${tid}`,{method:'PUT',body:JSON.stringify({[f]:v})});showUserDetail(tid);toast('Обновлено')}
+async function exportCSV(){const r=await fetch(`${API}/users/export/csv`,{headers:{'Authorization':`Bearer ${TOKEN}`}});const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='altyn_export.csv';a.click();URL.revokeObjectURL(u);toast('CSV скачан')}
 
-    // ==================== EVENT HANDLERS ====================
-    function attachEvents() {
-      // Navigation
-      document.querySelectorAll('.nav-item[data-page]').forEach(el => {
-        el.addEventListener('click', () => {
-          state.currentPage = el.dataset.page;
-          render();
-          loadPageData();
-        });
-      });
+async function loadBroadcasts(){
+  const b=await api('/broadcasts');if(!b)return;
+  const sn={draft:'Черновик',sending:'Отправка...',sent:'Отправлено',scheduled:'Запланировано',error:'Ошибка'},sc={draft:'',sending:'tag-blue',sent:'tag-green',scheduled:'tag-gold',error:'tag-red'};
+  document.getElementById('broadcasts-table').innerHTML=b.length?`<table><thead><tr><th>Название</th><th>Сегмент</th><th>Статус</th><th>Отправлено</th><th>Ошибки</th><th>Дата</th><th></th></tr></thead>
+    <tbody>${b.map(x=>`<tr><td><strong>${x.title}</strong>${x.ab_variant?` <span class="tag tag-purple">${x.ab_variant}</span>`:''}</td>
+      <td><span class="tag">${x.segment}</span></td><td><span class="tag ${sc[x.status]||''}">${sn[x.status]||x.status}</span></td>
+      <td>${x.sent_count||'—'}</td><td>${x.failed_count||'—'}</td><td style="font-size:11px;color:var(--text3)">${(x.sent_at||x.created_at)?.slice(0,16)||''}</td>
+      <td>${x.status==='draft'?`<button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${x.id})">📤</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет рассылок</p>'}
 
-      // Login
-      const loginBtn = document.getElementById('login-btn');
-      if (loginBtn) {
-        loginBtn.addEventListener('click', handleLogin);
-        document.getElementById('login-pass')?.addEventListener('keypress', (e) => {
-          if (e.key === 'Enter') handleLogin();
-        });
-      }
+async function updateSegmentCount(){const s=document.getElementById('bc-segment').value;const d=await api(`/broadcasts/segment-count/${s}`);if(d)document.getElementById('segment-count').textContent=`Получателей: ${d.count}`}
 
-      // Logout
-      document.getElementById('logout-btn')?.addEventListener('click', () => {
-        state.token = null;
-        localStorage.removeItem('altyn_token');
-        render();
-      });
+async function saveBroadcast(mode){
+  const t=document.getElementById('bc-title').value,c=document.getElementById('bc-content').value;if(!t||!c)return toast('Заполните поля',true);
+  const sch=document.getElementById('bc-schedule').value;
+  const d=await api('/broadcasts',{method:'POST',body:JSON.stringify({title:t,content:c,image_url:document.getElementById('bc-image').value||null,segment:document.getElementById('bc-segment').value,status:sch?'scheduled':'draft',scheduled_at:sch||null})});
+  if(mode==='send'&&d?.id)await api(`/broadcasts/${d.id}/send`,{method:'POST'});
+  closeModal('broadcast-modal');loadBroadcasts();toast(mode==='send'?'Отправляется!':sch?'Запланировано':'Черновик сохранён')}
 
-      // Filter apply
-      document.getElementById('filter-apply')?.addEventListener('click', loadUsers);
+async function sendBroadcastById(id){if(!confirm('Отправить?'))return;await api(`/broadcasts/${id}/send`,{method:'POST'});loadBroadcasts();toast('Отправляется!')}
 
-      // New broadcast
-      document.getElementById('new-broadcast-btn')?.addEventListener('click', showBroadcastModal);
+async function loadTemplates(){
+  const t=await api('/templates');if(!t)return;
+  const cn={promo:'🎯 Промо',warmup:'🔥 Прогрев',reminder:'⏰ Напоминание',event:'📅 Мероприятие',general:'📝 Общее'};
+  document.getElementById('templates-list').innerHTML=t.length?t.map(x=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px;border-bottom:1px solid var(--border)">
+    <div style="flex:1"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><strong>${x.name}</strong><span class="tag">${cn[x.category]||x.category}</span></div>
+    <div style="font-size:12px;color:var(--text3);max-height:40px;overflow:hidden">${x.content.slice(0,150)}</div></div>
+    <div style="display:flex;gap:6px"><button class="btn btn-sm btn-gold" onclick="useTemplate(${x.id})">Исп.</button><button class="btn btn-sm btn-outline" onclick="delTemplate(${x.id})">🗑</button></div></div>`).join(''):'<p style="text-align:center;color:var(--text3);padding:40px">Нет шаблонов</p>'}
 
-      // Send broadcast buttons
-      document.querySelectorAll('.send-broadcast-btn').forEach(btn => {
-        btn.addEventListener('click', () => sendBroadcastAction(parseInt(btn.dataset.id)));
-      });
+async function saveTemplate(){const n=document.getElementById('tpl-name').value,c=document.getElementById('tpl-content').value;if(!n||!c)return toast('Заполните',true);
+  await api('/templates',{method:'POST',body:JSON.stringify({name:n,content:c,category:document.getElementById('tpl-category').value})});closeModal('template-modal');loadTemplates();toast('Сохранён')}
+async function delTemplate(id){if(!confirm('Удалить?'))return;await api(`/templates/${id}`,{method:'DELETE'});loadTemplates()}
+function useTemplate(id){api('/templates').then(t=>{const x=t.find(a=>a.id===id);if(x){document.getElementById('bc-title').value=x.name;document.getElementById('bc-content').value=x.content;showModal('broadcast-modal');updateSegmentCount()}})}
 
-      // User detail buttons
-      document.querySelectorAll('.user-detail-btn').forEach(btn => {
-        btn.addEventListener('click', () => showUserDetail(parseInt(btn.dataset.id)));
-      });
+async function loadUtmLinks(){
+  const l=await api('/utm-links');if(!l)return;
+  document.getElementById('utm-list').innerHTML=l.length?`<table><thead><tr><th>Название</th><th>Источник</th><th>Канал</th><th>Кампания</th><th>Ссылка</th><th></th></tr></thead>
+    <tbody>${l.map(x=>`<tr><td><strong>${x.name}</strong></td><td><span class="tag tag-blue">${x.source}</span></td><td>${x.medium||'—'}</td><td>${x.campaign||'—'}</td>
+      <td><span class="copy-link" onclick="copyText('${x.full_link}')">${x.full_link}</span></td><td><button class="btn btn-sm btn-outline" onclick="delUtm(${x.id})">🗑</button></td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет ссылок</p>'}
 
-      // Load analytics data
-      if (state.currentPage === 'analytics') {
-        loadAnalyticsDetails();
-      }
-    }
+function showUtmModal(){showModal('utm-modal');updateUtmPreview()}
+function updateUtmPreview(){const s=document.getElementById('utm-source').value,m=document.getElementById('utm-medium').value||'link',c=document.getElementById('utm-campaign').value||'default';
+  document.getElementById('utm-preview').textContent=`https://t.me/altyntherapybot?start=${s}_${m}_${c}`}
+async function saveUtmLink(){const n=document.getElementById('utm-name').value;if(!n)return toast('Введите название',true);
+  await api('/utm-links',{method:'POST',body:JSON.stringify({name:n,source:document.getElementById('utm-source').value,medium:document.getElementById('utm-medium').value,campaign:document.getElementById('utm-campaign').value})});
+  closeModal('utm-modal');loadUtmLinks();toast('Создана')}
+async function delUtm(id){if(!confirm('Удалить?'))return;await api(`/utm-links/${id}`,{method:'DELETE'});loadUtmLinks()}
 
-    async function handleLogin() {
-      const username = document.getElementById('login-user').value;
-      const password = document.getElementById('login-pass').value;
-      if (!username || !password) return;
+async function loadReferrals(){
+  const s=await api('/dashboard'),r=await api('/analytics/referrals');
+  document.getElementById('referral-stats').innerHTML=`<div class="stat-card"><div class="label">Рефералов</div><div class="value">${s?.totalReferrals||0}</div></div>
+    <div class="stat-card"><div class="label">Конверсии</div><div class="value" style="color:var(--green)">${s?.referralConversions||0}</div></div>
+    <div class="stat-card"><div class="label">Рефереров</div><div class="value">${r?.length||0}</div></div>`;
+  document.getElementById('referrals-table').innerHTML=r?.length?`<table><thead><tr><th>Реферер</th><th>Username</th><th>Приглашено</th><th>Конверсии</th></tr></thead>
+    <tbody>${r.map(x=>`<tr><td>${x.first_name||x.referrer_telegram_id}</td><td>${x.username?'@'+x.username:'—'}</td><td>${x.total_referrals}</td><td><span class="tag tag-green">${x.conversions}</span></td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:20px">Пока нет</p>'}
 
-      const data = await api('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username, password })
-      });
+async function loadAbTests(){}
+async function createAbTest(){const t=document.getElementById('ab-title').value,a=document.getElementById('ab-content-a').value,b=document.getElementById('ab-content-b').value;
+  if(!t||!a||!b)return toast('Заполните',true);
+  await api('/broadcasts/ab-test',{method:'POST',body:JSON.stringify({title:t,segment:document.getElementById('ab-segment').value,variants:[{content:a},{content:b}]})});
+  closeModal('ab-test-modal');toast('A/B тест создан! См. Рассылки')}
 
-      if (data && data.token) {
-        state.token = data.token;
-        localStorage.setItem('altyn_token', data.token);
-        render();
-        loadPageData();
-      } else {
-        showToast('Неверный логин или пароль');
-      }
-    }
+async function loadHeatmap(){
+  const d=await api('/dashboard/heatmap');if(!d)return;
+  const days=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],mx=Math.max(...d.map(x=>x.count),1);
+  let h='<div class="heatmap"><div></div>';for(let i=0;i<24;i++)h+=`<div class="heatmap-header">${i}</div>`;
+  for(let day=0;day<7;day++){h+=`<div class="heatmap-label">${days[day]}</div>`;
+    for(let hr=0;hr<24;hr++){const c=d.find(x=>x.weekday===day&&x.hour===hr),cnt=c?.count||0,int=cnt/mx;
+      h+=`<div class="heatmap-cell" style="background:${int>0?`rgba(212,168,83,${.1+int*.9})`:'var(--bg3)'}" title="${days[day]} ${hr}:00 — ${cnt}">${cnt||''}</div>`}}
+  h+='</div>';document.getElementById('heatmap-container').innerHTML=h}
 
-    // ==================== DATA LOADING ====================
-    async function loadPageData() {
-      switch (state.currentPage) {
-        case 'dashboard':
-          state.stats = await api('/dashboard');
-          render();
-          break;
-        case 'users':
-          await loadUsers();
-          break;
-        case 'broadcasts':
-          state.broadcasts = await api('/broadcasts') || [];
-          render();
-          break;
-        case 'funnel':
-          state.funnel = await api('/dashboard/funnel');
-          render();
-          break;
-        case 'analytics':
-          state.stats = await api('/dashboard');
-          render();
-          break;
-      }
-    }
+async function loadCohorts(){
+  const c=await api('/analytics/cohorts');if(!c?.length)return;
+  document.getElementById('cohorts-table').innerHTML=`<table><thead><tr><th>Неделя</th><th>Всего</th><th>Квиз</th><th>Запись</th><th>Завершили</th><th>CR Квиз</th><th>CR Запись</th></tr></thead>
+    <tbody>${c.map(x=>{const cq=x.total>0?Math.round(x.quiz_completed/x.total*100):0,cb=x.total>0?Math.round(x.booked/x.total*100):0;
+      return`<tr><td><strong>${x.cohort_week}</strong></td><td>${x.total}</td><td>${x.quiz_completed}</td><td>${x.booked}</td><td>${x.completed}</td>
+        <td><span class="tag ${cq>50?'tag-green':'tag-gold'}">${cq}%</span></td><td><span class="tag ${cb>10?'tag-green':cb>0?'tag-gold':''}">${cb}%</span></td></tr>`}).join('')}</tbody></table>`}
 
-    async function loadUsers() {
-      const search = document.getElementById('filter-search')?.value || '';
-      const scenario = document.getElementById('filter-scenario')?.value || '';
-      const stage = document.getElementById('filter-stage')?.value || '';
-      const booking = document.getElementById('filter-booking')?.value || '';
+async function loadExitSurvey(){
+  const r=await api('/analytics/exit-reasons');if(!r)return;
+  const n={exit_expensive:'💰 Дорого',exit_not_ready:'⏳ Не готов',exit_dont_believe:'🤔 Не верю',exit_solved:'✅ Решил сам',exit_irrelevant:'❌ Не актуально'};
+  const total=r.reduce((s,x)=>s+x.count,0);
+  document.getElementById('exit-stats').innerHTML=`<div class="stat-card"><div class="label">Ответов</div><div class="value">${total}</div></div>
+    ${r.slice(0,3).map(x=>`<div class="stat-card"><div class="label">${n[x.exit_reason]||x.exit_reason}</div><div class="value">${x.count}</div><div class="change">${total>0?Math.round(x.count/total*100):0}%</div></div>`).join('')}`;
+  if(r.length)renderChart('chart-exit','bar',{labels:r.map(x=>n[x.exit_reason]||x.exit_reason),datasets:[{label:'Ответы',data:r.map(x=>x.count),backgroundColor:['#fb923c','#60a5fa','#a78bfa','#4ade80','#f87171']}]},{indexAxis:'y'})}
 
-      const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      if (scenario) params.set('scenario', scenario);
-      if (stage) params.set('funnel_stage', stage);
-      if (booking) params.set('booking_status', booking);
+function renderChart(id,type,data,extra={}){if(charts[id])charts[id].destroy();const ctx=document.getElementById(id);if(!ctx)return;
+  charts[id]=new Chart(ctx,{type,data,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#9898b0',font:{size:11}}}},
+    scales:type==='doughnut'||type==='pie'?{}:{x:{ticks:{color:'#6868a0',font:{size:10}},grid:{color:'rgba(42,42,64,0.5)'}},y:{ticks:{color:'#6868a0',font:{size:10}},grid:{color:'rgba(42,42,64,0.5)'}}},...extra}})}
 
-      state.users = await api(`/users?${params}`) || [];
-      render();
-    }
-
-    async function loadAnalyticsDetails() {
-      const sources = await api('/analytics/sources');
-      const scenarios = await api('/analytics/scenarios');
-
-      const srcEl = document.getElementById('sources-container');
-      if (srcEl && sources) {
-        srcEl.innerHTML = sources.length ? sources.map(s => `
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-            <span>${s.source}</span>
-            <span class="badge badge-gold">${s.count}</span>
-          </div>
-        `).join('') : '<div class="empty-state"><p>Нет данных</p></div>';
-      }
-
-      const scEl = document.getElementById('scenarios-container');
-      const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
-      if (scEl && scenarios) {
-        scEl.innerHTML = scenarios.length ? scenarios.map(s => `
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-            <span>${scenarioNames[s.scenario] || s.scenario}</span>
-            <span class="badge badge-info">${s.count}</span>
-          </div>
-        `).join('') : '<div class="empty-state"><p>Нет данных</p></div>';
-      }
-    }
-
-    // ==================== MODALS ====================
-    function showBroadcastModal() {
-      const modal = document.getElementById('broadcast-modal');
-      modal.innerHTML = `
-        <div class="modal-overlay" id="modal-overlay">
-          <div class="modal">
-            <div class="modal-header">
-              <h3>Новая рассылка</h3>
-              <button class="modal-close" id="modal-close">&times;</button>
-            </div>
-            <div class="modal-body">
-              <div class="form-group">
-                <label>Название</label>
-                <input type="text" id="bc-title" placeholder="Название рассылки">
-              </div>
-              <div class="form-group">
-                <label>Сегмент</label>
-                <select id="bc-segment">
-                  <option value="all">Все пользователи</option>
-                  <option value="quiz_completed">Прошли квиз</option>
-                  <option value="warmup_active">На прогреве</option>
-                  <option value="not_booked">Не записались</option>
-                  <option value="booked">Записались</option>
-                  <option value="scenario_savior">🛡 Спасатели</option>
-                  <option value="scenario_fear">💔 Страх</option>
-                  <option value="scenario_control">🎯 Контроль</option>
-                  <option value="scenario_freeze">❄️ Заморозка</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>Текст сообщения (Markdown)</label>
-                <textarea id="bc-content" rows="6" placeholder="Текст рассылки..."></textarea>
-              </div>
-              <div class="form-group">
-                <label>URL картинки (необязательно)</label>
-                <input type="text" id="bc-image" placeholder="https://...">
-              </div>
-            </div>
-            <div class="modal-footer">
-              <button class="btn btn-secondary" id="modal-cancel">Отмена</button>
-              <button class="btn btn-primary" id="bc-save">Сохранить черновик</button>
-              <button class="btn btn-primary" id="bc-send-now" style="background:linear-gradient(135deg,var(--success),#2d9f5a);color:#fff">Отправить сейчас</button>
-            </div>
-          </div>
-        </div>
-      `;
-
-      document.getElementById('modal-close').addEventListener('click', () => modal.innerHTML = '');
-      document.getElementById('modal-cancel').addEventListener('click', () => modal.innerHTML = '');
-      document.getElementById('modal-overlay').addEventListener('click', (e) => {
-        if (e.target === e.currentTarget) modal.innerHTML = '';
-      });
-
-      document.getElementById('bc-save').addEventListener('click', async () => {
-        await createBroadcastAction('draft');
-        modal.innerHTML = '';
-      });
-
-      document.getElementById('bc-send-now').addEventListener('click', async () => {
-        const id = await createBroadcastAction('draft');
-        if (id) await sendBroadcastAction(id);
-        modal.innerHTML = '';
-      });
-    }
-
-    async function createBroadcastAction(status) {
-      const title = document.getElementById('bc-title').value;
-      const content = document.getElementById('bc-content').value;
-      const segment = document.getElementById('bc-segment').value;
-      const image_url = document.getElementById('bc-image').value;
-
-      if (!title || !content) {
-        showToast('Заполните название и текст');
-        return null;
-      }
-
-      const result = await api('/broadcasts', {
-        method: 'POST',
-        body: JSON.stringify({ title, content, segment, image_url, status })
-      });
-
-      if (result) {
-        showToast('Рассылка создана');
-        state.broadcasts = await api('/broadcasts') || [];
-        render();
-        return result.id;
-      }
-      return null;
-    }
-
-    async function sendBroadcastAction(id) {
-      const result = await api(`/broadcasts/${id}/send`, { method: 'POST' });
-      if (result) {
-        showToast('Рассылка отправляется...');
-        setTimeout(async () => {
-          state.broadcasts = await api('/broadcasts') || [];
-          render();
-        }, 3000);
-      }
-    }
-
-    function showUserDetail(telegramId) {
-      // Simple alert with user info for now
-      const user = state.users.find(u => u.telegram_id === telegramId);
-      if (!user) return;
-
-      const scenarioNames = { savior: '🛡 Спасатель', fear: '💔 Страх', control: '🎯 Контроль', freeze: '❄️ Заморозка' };
-      const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Аноним';
-
-      const details = [
-        `👤 ${name}`,
-        user.username ? `📱 @${user.username}` : '',
-        `🆔 ${user.telegram_id}`,
-        `🎭 Сценарий: ${scenarioNames[user.scenario] || 'не определён'}`,
-        `📊 Этап: ${user.funnel_stage}`,
-        `📝 Запись: ${user.booking_status}`,
-        user.booking_name ? `📋 Имя для записи: ${user.booking_name}` : '',
-        user.booking_request ? `💬 Запрос: ${user.booking_request}` : '',
-        user.booking_time ? `📅 Время: ${user.booking_time}` : '',
-        `🔥 Прогрев: день ${user.warmup_day || 0}`,
-        `📅 Регистрация: ${new Date(user.created_at).toLocaleString('ru')}`,
-        `🔗 Источник: ${user.source}`
-      ].filter(Boolean).join('\n');
-
-      alert(details);
-    }
-
-    // ==================== TOAST ====================
-    function showToast(msg) {
-      state.toast = msg;
-      render();
-      setTimeout(() => {
-        state.toast = null;
-        const t = document.getElementById('toast');
-        if (t) t.remove();
-      }, 3000);
-    }
-
-    // ==================== INIT ====================
-    render();
-    if (state.token) loadPageData();
-  </script>
+function showModal(id){document.getElementById(id).classList.add('show')}
+function closeModal(id){document.getElementById(id).classList.remove('show')}
+function toast(msg,err=false){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast show ${err?'error':''}`;setTimeout(()=>t.classList.remove('show'),3000)}
+function copyText(t){navigator.clipboard.writeText(t).then(()=>toast('Скопировано!')).catch(()=>{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');document.body.removeChild(a);toast('Скопировано!')})}
+</script>
 </body>
 </html>
