@@ -19,6 +19,39 @@ const OWNER_ID = process.env.OWNER_TELEGRAM_ID;
 
 let bot;
 
+// ============================================================
+// HELPER: Progress bar for quiz
+// ============================================================
+function quizProgressBar(current, total) {
+  const filled = Math.round((current / total) * 7);
+  const empty = 7 - filled;
+  return '▓'.repeat(filled) + '░'.repeat(empty) + ` ${current}/${total}`;
+}
+
+// ============================================================
+// HELPER: Typing indicator with delay
+// ============================================================
+async function sendTyping(chatId, delayMs = 1000) {
+  try {
+    await bot.sendChatAction(chatId, 'typing');
+    await new Promise(r => setTimeout(r, delayMs));
+  } catch(e) {}
+}
+
+// ============================================================
+// HELPER: Remove inline keyboard from a message
+// ============================================================
+async function removeKeyboard(chatId, messageId) {
+  try {
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  } catch(e) {
+    // Message might be too old or already edited
+  }
+}
+
 export function initBot(token) {
   bot = new TelegramBot(token, { polling: true });
 
@@ -34,7 +67,6 @@ export function initBot(token) {
 
     if (param) {
       if (param.startsWith('ref_')) {
-        // Referral link
         referrerId = param.replace('ref_', '');
         source = 'referral';
         utm = { utm_source: 'referral', utm_medium: 'bot', utm_campaign: referrerId };
@@ -45,7 +77,7 @@ export function initBot(token) {
       }
     }
 
-    const user = createUser({
+    createUser({
       telegram_id: chatId,
       username: msg.from.username,
       first_name: msg.from.first_name,
@@ -56,7 +88,7 @@ export function initBot(token) {
     logEvent('start', chatId, { source, param, referrerId });
     logMessage(chatId, 'in', 'command', '/start');
 
-    // Reset quiz state for restart
+    // Reset quiz state for restart — also clear booking fields
     updateUser(chatId, {
       funnel_stage: 'started',
       quiz_answers: null,
@@ -65,6 +97,9 @@ export function initBot(token) {
       warmup_day: 0,
       warmup_active: 1,
       booking_status: 'none',
+      booking_name: null,
+      booking_request: null,
+      booking_time: null,
       referred_by: referrerId || undefined,
       ...utm
     });
@@ -74,7 +109,6 @@ export function initBot(token) {
       try {
         const { trackReferral } = await import('./database.js');
         trackReferral(referrerId, chatId);
-        // Notify referrer
         const referrer = getUser(parseInt(referrerId));
         if (referrer) {
           const newName = msg.from.first_name || 'Кто-то';
@@ -132,74 +166,112 @@ export function initBot(token) {
     }
   });
 
-  // Callback queries (quiz, booking, exit survey, referral, etc.)
+  // ============================================================
+  // CALLBACK QUERIES (quiz, booking, exit survey, referral, etc.)
+  // ============================================================
   bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
+    const messageId = query.message.message_id;
     const data = query.data;
 
     await bot.answerCallbackQuery(query.id);
 
-    // Quiz start
+    // ---- Quiz start ----
     if (data === 'quiz_start') {
       logEvent('quiz_start', chatId, {});
       updateUser(chatId, { funnel_stage: 'quiz', quiz_answers: JSON.stringify([]) });
+      // Remove "Пройти тест" button from welcome message
+      await removeKeyboard(chatId, messageId);
+      await sendTyping(chatId, 500);
       await sendQuizQuestion(chatId, 0);
       return;
     }
 
-    // Quiz answer
+    // ---- Quiz answer ----
     if (data.startsWith('quiz_')) {
       const parts = data.split('_');
-      if (parts[1] === 'start') return;
+      if (parts[1] === 'start') return; // safety guard
       const qIndex = parseInt(parts[1]);
       const aIndex = parseInt(parts[2]);
+
+      // Validate parsed values
+      if (isNaN(qIndex) || isNaN(aIndex)) return;
+      if (qIndex < 0 || qIndex >= QUIZ_QUESTIONS.length) return;
+      if (aIndex < 0 || aIndex >= QUIZ_QUESTIONS[qIndex].options.length) return;
 
       const user = getUser(chatId);
       if (!user) return;
 
       let answers = [];
       try { answers = JSON.parse(user.quiz_answers || '[]'); } catch(e) { answers = []; }
+
+      // *** FIX: Duplicate answer protection ***
+      if (answers.some(a => a.question === qIndex)) {
+        // Already answered this question — ignore duplicate click
+        return;
+      }
+
       answers.push({ question: qIndex, answer: aIndex });
       updateUser(chatId, { quiz_answers: JSON.stringify(answers) });
+
+      // Remove buttons from the answered question
+      await removeKeyboard(chatId, messageId);
 
       logMessage(chatId, 'in', 'quiz_answer', `Q${qIndex + 1}: option ${aIndex}`);
 
       // Next question or results
       if (qIndex + 1 < QUIZ_QUESTIONS.length) {
+        await sendTyping(chatId, 600);
         await sendQuizQuestion(chatId, qIndex + 1);
       } else {
+        await sendTyping(chatId, 1000);
         await sendQuizResult(chatId, answers);
       }
       return;
     }
 
-    // Book diagnostic
+    // ---- Book diagnostic ----
     if (data === 'book_diagnostic') {
       logEvent('book_start', chatId, {});
-      updateUser(chatId, { funnel_stage: 'booking' });
-      await bot.sendMessage(chatId, '📝 *Запись на бесплатную диагностику*\n\nКак вас зовут?', {
-        parse_mode: 'Markdown',
-        reply_markup: { force_reply: true }
+      // Clear previous booking data for fresh start
+      updateUser(chatId, {
+        funnel_stage: 'booking',
+        booking_name: null,
+        booking_request: null,
+        booking_time: null
+      });
+      await removeKeyboard(chatId, messageId);
+      await sendTyping(chatId, 500);
+      
+      const user = getUser(chatId);
+      const name = user?.first_name || '';
+      
+      await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${name}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
+        parse_mode: 'Markdown'
       });
       return;
     }
 
-    // Restart quiz
+    // ---- Restart quiz ----
     if (data === 'restart_quiz') {
       updateUser(chatId, { quiz_answers: JSON.stringify([]), scenario: null, funnel_stage: 'quiz' });
+      await removeKeyboard(chatId, messageId);
+      await sendTyping(chatId, 500);
       await sendQuizQuestion(chatId, 0);
       return;
     }
 
-    // Continue quiz (from reminder)
+    // ---- Continue quiz (from reminder) ----
     if (data === 'continue_quiz') {
       const user = getUser(chatId);
       if (!user) return;
       let answers = [];
       try { answers = JSON.parse(user.quiz_answers || '[]'); } catch(e) { answers = []; }
       const nextQ = answers.length;
+      await removeKeyboard(chatId, messageId);
       if (nextQ < QUIZ_QUESTIONS.length) {
         updateUser(chatId, { funnel_stage: 'quiz' });
+        await sendTyping(chatId, 500);
         await sendQuizQuestion(chatId, nextQ);
       } else {
         await sendQuizResult(chatId, answers);
@@ -207,37 +279,62 @@ export function initBot(token) {
       return;
     }
 
-    // Continue booking (from reminder)
+    // ---- Continue booking (from reminder) ----
     if (data === 'continue_booking') {
       updateUser(chatId, { funnel_stage: 'booking' });
+      await removeKeyboard(chatId, messageId);
       const user = getUser(chatId);
       if (user && user.booking_name) {
         if (!user.booking_request) {
-          await bot.sendMessage(chatId, '✍️ Отлично! Опишите кратко ваш запрос — с чем хотите поработать?', {
-            reply_markup: { force_reply: true }
-          });
+          await bot.sendMessage(chatId, '✍️ Отлично! Опишите кратко ваш запрос — с чем хотите поработать?');
         } else {
-          await bot.sendMessage(chatId, '📅 Когда вам удобно? Напишите желаемую дату и время (например: «Среда, 18:00»)', {
-            reply_markup: { force_reply: true }
-          });
+          await bot.sendMessage(chatId, '📅 Когда вам удобно? Напишите желаемую дату и время (например: «Среда, 18:00»)');
         }
       } else {
-        await bot.sendMessage(chatId, '📝 *Запись на бесплатную диагностику*\n\nКак вас зовут?', {
-          parse_mode: 'Markdown',
-          reply_markup: { force_reply: true }
+        await bot.sendMessage(chatId, '📝 *Запись на бесплатную диагностику*\n\nКак вас зовут? (Имя и фамилия)', {
+          parse_mode: 'Markdown'
         });
       }
       return;
     }
 
-    // Exit survey answers
+    // ---- Confirm booking (owner action) ----
+    if (data.startsWith('confirm_booking_')) {
+      const clientId = parseInt(data.replace('confirm_booking_', ''));
+      if (isNaN(clientId)) return;
+      
+      updateUser(clientId, { booking_status: 'confirmed' });
+      await removeKeyboard(chatId, messageId);
+      await bot.sendMessage(chatId, `✅ Запись клиента ${clientId} подтверждена!`);
+      
+      // Notify client
+      try {
+        await bot.sendMessage(clientId, '✅ *Отличная новость!*\n\nВаша запись на диагностическую сессию подтверждена. Ждём вас!\n\nЕсли нужно перенести — напишите в WhatsApp.', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+            ]
+          }
+        });
+      } catch(e) {
+        await bot.sendMessage(chatId, '⚠️ Не удалось уведомить клиента (возможно, заблокировал бота).');
+      }
+      
+      logEvent('booking_confirmed', clientId, { confirmed_by: chatId });
+      return;
+    }
+
+    // ---- Exit survey answers ----
     if (data.startsWith('exit_')) {
       logEvent('exit_survey', chatId, { reason: data });
       updateUser(chatId, { exit_reason: data });
+      await removeKeyboard(chatId, messageId);
 
       const followups = EXIT_FOLLOWUPS[data];
       if (followups) {
         for (const text of followups) {
+          await sendTyping(chatId, 500);
           await bot.sendMessage(chatId, text, {
             parse_mode: 'Markdown',
             reply_markup: data !== 'exit_solved' && data !== 'exit_irrelevant' ? {
@@ -247,17 +344,15 @@ export function initBot(token) {
               ]
             } : undefined
           });
-          await new Promise(r => setTimeout(r, 500));
         }
       }
 
-      // Thank them
       await bot.sendMessage(chatId, '🙏 Спасибо за ответ! Это поможет нам стать лучше.');
       logMessage(chatId, 'out', 'exit_followup', data);
       return;
     }
 
-    // Referral link request
+    // ---- Referral link request ----
     if (data === 'get_referral') {
       const user = getUser(chatId);
       if (!user) return;
@@ -269,7 +364,7 @@ export function initBot(token) {
       return;
     }
 
-    // WhatsApp link
+    // ---- WhatsApp link ----
     if (data === 'whatsapp') {
       await bot.sendMessage(chatId, '📱 Напишите мне в WhatsApp:\nhttps://wa.me/77077198561\n\nИли позвоните: +7 707 719 85 61', {
         reply_markup: {
@@ -281,7 +376,7 @@ export function initBot(token) {
       return;
     }
 
-    // Instagram link
+    // ---- Instagram link ----
     if (data === 'instagram') {
       await bot.sendMessage(chatId, '📸 Подписывайтесь на Instagram:\nhttps://instagram.com/altyn.therapy', {
         reply_markup: {
@@ -294,97 +389,108 @@ export function initBot(token) {
     }
   });
 
-  // Handle text messages (for booking flow)
+  // ============================================================
+  // TEXT MESSAGES — State-machine booking flow (no force_reply needed!)
+  // ============================================================
   bot.on('message', async (msg) => {
-    if (msg.text && msg.text.startsWith('/')) return;
-    if (!msg.reply_to_message) return;
+    if (!msg.text) return;
+    if (msg.text.startsWith('/')) return;
 
     const chatId = msg.chat.id;
     const user = getUser(chatId);
     if (!user) return;
 
-    const replyText = msg.reply_to_message.text || '';
+    // ---- BOOKING FLOW: State machine approach ----
+    if (user.funnel_stage === 'booking') {
+      
+      // Step 1: Waiting for name
+      if (!user.booking_name) {
+        updateUser(chatId, { booking_name: msg.text.trim() });
+        logMessage(chatId, 'in', 'booking_name', msg.text);
+        await sendTyping(chatId, 500);
+        await bot.sendMessage(chatId, `✍️ Приятно познакомиться, *${msg.text.trim()}*!\n\nОпишите кратко ваш запрос — с чем хотите поработать?`, {
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
 
-    // Booking: Name
-    if (user.funnel_stage === 'booking' && replyText.includes('Как вас зовут')) {
-      updateUser(chatId, { booking_name: msg.text });
-      await bot.sendMessage(chatId, '✍️ Отлично! Опишите кратко ваш запрос — с чем хотите поработать?', {
-        reply_markup: { force_reply: true }
-      });
-      logMessage(chatId, 'in', 'booking_name', msg.text);
-      return;
-    }
+      // Step 2: Waiting for request description
+      if (!user.booking_request) {
+        updateUser(chatId, { booking_request: msg.text.trim() });
+        logMessage(chatId, 'in', 'booking_request', msg.text);
+        await sendTyping(chatId, 500);
+        await bot.sendMessage(chatId, '📅 Когда вам удобно? Напишите желаемую дату и время\n\n_Например: «Среда, 18:00» или «Завтра после 15:00»_', {
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
 
-    // Booking: Request
-    if (user.funnel_stage === 'booking' && (replyText.includes('Опишите кратко') || replyText.includes('запрос'))) {
-      updateUser(chatId, { booking_request: msg.text });
-      await bot.sendMessage(chatId, '📅 Когда вам удобно? Напишите желаемую дату и время (например: «Среда, 18:00»)', {
-        reply_markup: { force_reply: true }
-      });
-      logMessage(chatId, 'in', 'booking_request', msg.text);
-      return;
-    }
+      // Step 3: Waiting for time
+      if (!user.booking_time) {
+        updateUser(chatId, {
+          booking_time: msg.text.trim(),
+          booking_status: 'booked',
+          funnel_stage: 'booked'
+        });
 
-    // Booking: Time
-    if (user.funnel_stage === 'booking' && (replyText.includes('Когда вам удобно') || replyText.includes('дату и время'))) {
-      updateUser(chatId, {
-        booking_time: msg.text,
-        booking_status: 'booked',
-        funnel_stage: 'booked'
-      });
+        const updatedUser = getUser(chatId);
+        const name = updatedUser.booking_name || updatedUser.first_name || 'друг';
 
-      const updatedUser = getUser(chatId);
-      const name = updatedUser.booking_name || updatedUser.first_name || 'друг';
+        logMessage(chatId, 'in', 'booking_time', msg.text);
+        logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
 
-      await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(name), {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🎁 Пригласить друга (скидка 10%)', callback_data: 'get_referral' }],
-            [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
-            [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
-          ]
-        }
-      });
-
-      logMessage(chatId, 'in', 'booking_time', msg.text);
-      logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
-
-      // AUTO-HANDOFF: Notify owner with full details + quick action buttons
-      if (OWNER_ID) {
-        const scenario = updatedUser.scenario || 'не определён';
-        const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
-        const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
-        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
-          `👤 *Имя:* ${updatedUser.booking_name}\n` +
-          `📱 *Telegram:* ${uname}\n` +
-          `🆔 *ID:* \`${chatId}\`\n` +
-          `🎭 *Сценарий:* ${scenarioTitle}\n` +
-          `📝 *Запрос:* ${updatedUser.booking_request}\n` +
-          `📅 *Время:* ${msg.text}\n` +
-          `📊 *Источник:* ${updatedUser.source || 'organic'}\n` +
-          `${updatedUser.utm_campaign ? `📎 *Кампания:* ${updatedUser.utm_campaign}\n` : ''}` +
-          `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
-          `📞 Написать: tg://user?id=${chatId}`;
-
-        bot.sendMessage(OWNER_ID, ownerMsg, {
+        await sendTyping(chatId, 1000);
+        await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(name), {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '✅ Подтвердить запись', callback_data: `confirm_booking_${chatId}` }],
-              [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }]
+              [{ text: '🎁 Пригласить друга (скидка 10%)', callback_data: 'get_referral' }],
+              [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
+              [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
             ]
           }
-        }).catch(() => {});
-      }
+        });
 
-      // Stop warmup
-      updateUser(chatId, { warmup_active: 0 });
-      return;
+        // AUTO-HANDOFF: Notify owner with full details
+        if (OWNER_ID) {
+          const scenario = updatedUser.scenario || 'не определён';
+          const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
+          const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
+          const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
+            `👤 *Имя:* ${updatedUser.booking_name}\n` +
+            `📱 *Telegram:* ${uname}\n` +
+            `🆔 *ID:* \`${chatId}\`\n` +
+            `🎭 *Сценарий:* ${scenarioTitle}\n` +
+            `📝 *Запрос:* ${updatedUser.booking_request}\n` +
+            `📅 *Время:* ${msg.text}\n` +
+            `📊 *Источник:* ${updatedUser.source || 'organic'}\n` +
+            `${updatedUser.utm_campaign ? `📎 *Кампания:* ${updatedUser.utm_campaign}\n` : ''}` +
+            `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
+            `📞 Написать: tg://user?id=${chatId}`;
+
+          bot.sendMessage(OWNER_ID, ownerMsg, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '✅ Подтвердить запись', callback_data: `confirm_booking_${chatId}` }],
+                [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }]
+              ]
+            }
+          }).catch(() => {});
+        }
+
+        // Stop warmup
+        updateUser(chatId, { warmup_active: 0 });
+        return;
+      }
     }
+
+    // If not in booking flow — ignore non-command messages
   });
 
-  // Help command
+  // ============================================================
+  // COMMANDS
+  // ============================================================
   bot.onText(/\/help/, (msg) => {
     bot.sendMessage(msg.chat.id, `🔮 *Алтын | Гипнотерапевт*\n\nКоманды:\n/start — Начать заново\n/quiz — Пройти тест\n/book — Записаться на диагностику\n/about — О гипнотерапии\n/contact — Контакты\n/referral — Реферальная ссылка`, { parse_mode: 'Markdown' });
   });
@@ -395,10 +501,14 @@ export function initBot(token) {
   });
 
   bot.onText(/\/book/, (msg) => {
-    updateUser(msg.chat.id, { funnel_stage: 'booking' });
-    bot.sendMessage(msg.chat.id, '📝 *Запись на бесплатную диагностику*\n\nКак вас зовут?', {
-      parse_mode: 'Markdown',
-      reply_markup: { force_reply: true }
+    updateUser(msg.chat.id, {
+      funnel_stage: 'booking',
+      booking_name: null,
+      booking_request: null,
+      booking_time: null
+    });
+    bot.sendMessage(msg.chat.id, '📝 *Запись на бесплатную диагностику*\n\nКак вас зовут? (Имя и фамилия)', {
+      parse_mode: 'Markdown'
     });
   });
 
@@ -411,7 +521,7 @@ export function initBot(token) {
   });
 
   bot.onText(/\/about/, (msg) => {
-    bot.sendMessage(msg.chat.id, `🧠 *Что такое гипнотерапия?*\n\nТерапевтический гипноз — это работа с бессознательным в состоянии глубокого расслабления.\n\n◇ Вы в сознании и всё контролируете\n◇ Это НЕ то, что показывают в кино\n◇ 8 сессий вместо лет обычной терапии\n◇ Работает с корнем проблемы, а не симптомами\n\n*Запросы:*\n• Повторяющиеся сценарии в отношениях\n• Финансовый потолок\n• Фоновая тревога\n• Синдром самозванца\n• Прокрастинация\n\n🌐 Подробнее: altyn-therapy.pages.dev`, {
+    bot.sendMessage(msg.chat.id, `🧠 *Что такое гипнотерапия?*\n\nТерапевтический гипноз — это работа с бессознательным в состоянии глубокого расслабления.\n\n◇ Вы в сознании и всё контролируете\n◇ Это НЕ то, что показывают в кино\n◇ 8 сессий вместо лет обычной терапии\n◇ Работает с корнем проблемы, а не симптомами\n\n*Запросы:*\n• Повторяющиеся сценарии в отношениях\n• Финансовый потолок\n• Фоновая тревога\n• Синдром самозванца\n• Прокрастинация\n\n🌐 Подробнее: altyn-therapy.uz`, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [[
@@ -423,30 +533,46 @@ export function initBot(token) {
   });
 
   bot.onText(/\/contact/, (msg) => {
-    bot.sendMessage(msg.chat.id, `📞 *Контакты Алтын*\n\n💬 WhatsApp: +7 707 719 85 61\n📸 Instagram: @altyn.therapy\n🌐 Сайт: altyn-therapy.pages.dev`, {
+    bot.sendMessage(msg.chat.id, `📞 *Контакты Алтын*\n\n💬 WhatsApp: +7 707 719 85 61\n📸 Instagram: @altyn.therapy\n🌐 Сайт: altyn-therapy.uz`, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
           [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }],
-          [{ text: '🌐 Сайт', url: 'https://altyn-therapy.pages.dev' }]
+          [{ text: '🌐 Сайт', url: 'https://altyn-therapy.uz' }]
         ]
       }
     });
   });
 
-  console.log('🤖 Altyn Therapy Bot v2.0 started');
+  // Handle polling errors gracefully
+  bot.on('polling_error', (err) => {
+    if (err.code === 'ETELEGRAM' && err.response?.statusCode === 409) {
+      console.error('⚠️ CONFLICT: Another bot instance is running with the same token!');
+      console.error('⚠️ Only ONE instance should be running at a time.');
+    } else {
+      console.error('Polling error:', err.code, err.message);
+    }
+  });
+
+  console.log('🤖 Altyn Therapy Bot v2.1 started');
   return bot;
 }
 
+// ============================================================
+// QUIZ QUESTION SENDER (with progress bar)
+// ============================================================
 async function sendQuizQuestion(chatId, index) {
   const q = QUIZ_QUESTIONS[index];
+  const progress = quizProgressBar(index + 1, QUIZ_QUESTIONS.length);
   const keyboard = q.options.map((opt, i) => [{
     text: opt.text,
     callback_data: `quiz_${index}_${i}`
   }]);
 
-  await bot.sendMessage(chatId, q.text, {
+  const text = `${progress}\n\n${q.text}`;
+
+  await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: keyboard }
   });
@@ -454,6 +580,9 @@ async function sendQuizQuestion(chatId, index) {
   logMessage(chatId, 'out', 'quiz_question', `Question ${index + 1}`);
 }
 
+// ============================================================
+// QUIZ RESULT SENDER
+// ============================================================
 async function sendQuizResult(chatId, answers) {
   const scores = { savior: 0, fear: 0, control: 0, freeze: 0 };
 
@@ -478,6 +607,15 @@ async function sendQuizResult(chatId, answers) {
 
   logEvent('quiz_complete', chatId, { scenario, scores });
 
+  // Send "analyzing" message for suspense
+  const analyzingMsg = await bot.sendMessage(chatId, '🔮 *Анализирую ваши ответы...*', { parse_mode: 'Markdown' });
+  await new Promise(r => setTimeout(r, 2000));
+
+  // Delete analyzing message
+  try {
+    await bot.deleteMessage(chatId, analyzingMsg.message_id);
+  } catch(e) {}
+
   // Send result image
   try {
     const imgPath = path.resolve(__dirname, '..', 'assets', `result_${result.image}.png`);
@@ -495,11 +633,13 @@ async function sendQuizResult(chatId, answers) {
   const testimonials = TESTIMONIALS[scenario];
   if (testimonials && testimonials.length > 0) {
     const randomTestimonial = testimonials[Math.floor(Math.random() * testimonials.length)];
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 1500));
+    await sendTyping(chatId, 800);
     await bot.sendMessage(chatId, randomTestimonial, { parse_mode: 'Markdown' });
   }
 
-  // Send CTA
+  // Send CTA with delay
+  await new Promise(r => setTimeout(r, 1000));
   await bot.sendMessage(chatId, result.cta, {
     parse_mode: 'Markdown',
     reply_markup: {
@@ -555,7 +695,6 @@ export async function sendWarmupMessages() {
 
     if (!msgToSend) {
       if (nextDay > 14) {
-        // Send exit survey before deactivating
         if (!user.exit_reason) {
           await sendExitSurvey(user.telegram_id);
         }
