@@ -37,7 +37,7 @@ app.use('/api', adminRouter);
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.0.0',
+    version: '2.1.0',
     uptime: process.uptime(),
     timestamp: new Date().toISOString()
   });
@@ -49,7 +49,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Admin panel v2.0 running on port ${PORT}`);
+  console.log(`🌐 Admin panel v2.1 running on port ${PORT}`);
 }).on('error', (err) => {
   console.error('Server error:', err.message);
   if (err.code === 'EADDRINUSE') {
@@ -108,7 +108,7 @@ cron.schedule('0 */6 * * *', async () => {
   }
 });
 
-console.log('✅ Altyn Therapy System v2.0 started');
+console.log('✅ Altyn Therapy System v2.1 started');
 console.log(`🤖 Bot: @altyntherapybot`);
 console.log(`🌐 Admin: http://localhost:${PORT}`);
 console.log('📋 Cron jobs: warmup (10:00), reminders (every 2h), scheduled broadcasts (every 1m)');
