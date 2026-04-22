@@ -1,6 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import helmet from 'helmet';
 import {
   getStats, getAllUsers, getUser, updateUser, getUserCount,
   createBroadcast, getBroadcasts, updateBroadcast, getBroadcastUsers,
@@ -16,7 +17,10 @@ import { sendBroadcast } from './bot.js';
 import db from './database.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'altyn-admin-secret-2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'altyn_jwt_' + Math.random().toString(36).slice(2) + '_2024_secure';
+
+// Apply security headers
+router.use(helmet({ contentSecurityPolicy: false }));
 
 // Simple in-memory rate limiter for login attempts (max 10 per 15 min per IP)
 const loginAttempts = new Map();
@@ -109,16 +113,17 @@ router.get('/dashboard/funnel', authMiddleware, (req, res) => {
 });
 
 router.get('/dashboard/activity', authMiddleware, (req, res) => {
-  const days = parseInt(req.query.days) || 30;
+  // FIX: Sanitize days param to prevent SQL injection
+  const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
   const activity = db.prepare(`
     SELECT date(created_at) as date,
            COUNT(DISTINCT user_telegram_id) as users,
            COUNT(*) as messages
     FROM messages_log
-    WHERE created_at >= datetime('now', '-${days} days')
+    WHERE created_at >= datetime('now', ? || ' days')
     GROUP BY date(created_at)
     ORDER BY date
-  `).all();
+  `).all('-' + days);
   res.json(activity);
 });
 
@@ -356,14 +361,15 @@ router.delete('/utm-links/:id', authMiddleware, (req, res) => {
 // ==================== ANALYTICS ====================
 
 router.get('/analytics/events', authMiddleware, (req, res) => {
-  const days = parseInt(req.query.days) || 30;
+  // FIX: Sanitize days param to prevent SQL injection
+  const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
   const events = db.prepare(`
     SELECT event_type, COUNT(*) as count, date(created_at) as date
     FROM analytics_events
-    WHERE created_at >= datetime('now', '-${days} days')
+    WHERE created_at >= datetime('now', ? || ' days')
     GROUP BY event_type, date(created_at)
     ORDER BY date
-  `).all();
+  `).all('-' + days);
   res.json(events);
 });
 

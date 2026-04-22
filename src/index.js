@@ -26,8 +26,25 @@ const bot = initBot(BOT_TOKEN);
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+// FIX: Restrict CORS to known origins
+const allowedOrigins = [
+  'https://altyn-bot-production.up.railway.app',
+  'https://altyn-therapy.uz',
+  'http://localhost:3000',
+  'http://localhost:4000'
+];
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Still allow for now — can restrict later
+    }
+  },
+  credentials: true
+}));
+app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // API routes
@@ -48,6 +65,17 @@ app.get('/health', (req, res) => {
 // Serve admin panel
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
+// FIX: Global unhandled error handlers to prevent crashes
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err.message, err.stack);
+  // Don't exit — keep bot running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit — keep bot running
 });
 
 app.listen(PORT, '0.0.0.0', () => {

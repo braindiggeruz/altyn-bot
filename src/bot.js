@@ -78,9 +78,12 @@ async function removeKeyboard(chatId, messageId) {
 // HELPER: Phone number validation
 // ============================================================
 function isValidPhone(text) {
-  // Accepts: +7XXXXXXXXXX, 8XXXXXXXXXX, +998XXXXXXXXX, +7 777 123 45 67, etc.
-  const cleaned = text.replace(/[\s\-\(\)]/g, '');
-  return /^(\+?[78]\d{10}|\+?998\d{9}|\+?7\d{10})$/.test(cleaned);
+  // Accepts: +7XXXXXXXXXX, 8XXXXXXXXXX, 87XXXXXXXXX, +998XXXXXXXXX, +7 777 123 45 67, etc.
+  const cleaned = text.replace(/[\s\-\(\)\.]/g, '');
+  // Kazakhstan: +7 or 8 followed by 10 digits, or just 10 digits starting with 7
+  // Uzbekistan: +998 followed by 9 digits
+  // Generic: any + followed by 10-14 digits
+  return /^(\+?[78]\d{10}|\+?998\d{9}|\+\d{10,14}|\d{10,11})$/.test(cleaned);
 }
 
 // ============================================================
@@ -134,21 +137,34 @@ export function initBot(token) {
     logEvent('start', chatId, { source, param, referrerId });
     logMessage(chatId, 'in', 'command', '/start');
 
-    // Reset quiz state for restart — also clear booking fields
-    updateUser(chatId, {
-      funnel_stage: 'started',
-      quiz_answers: null,
-      quiz_score: 0,
-      scenario: null,
-      warmup_day: 0,
-      warmup_active: 1,
-      booking_status: 'none',
-      booking_name: null,
-      booking_request: null,
-      booking_time: null,
-      referred_by: referrerId || undefined,
-      ...utm
-    });
+    // FIX: Don't reset booking data if user already booked/completed
+    const existingUser = getUser(chatId);
+    const alreadyBooked = existingUser && ['booked', 'confirmed', 'completed'].includes(existingUser.booking_status);
+    
+    if (alreadyBooked) {
+      // Just update source/utm, don't reset booking
+      updateUser(chatId, {
+        last_active: new Date().toISOString(),
+        referred_by: referrerId || undefined,
+        ...utm
+      });
+    } else {
+      // Reset quiz state for restart — also clear booking fields
+      updateUser(chatId, {
+        funnel_stage: 'started',
+        quiz_answers: null,
+        quiz_score: 0,
+        scenario: null,
+        warmup_day: 0,
+        warmup_active: 1,
+        booking_status: 'none',
+        booking_name: null,
+        booking_request: null,
+        booking_time: null,
+        referred_by: referrerId || undefined,
+        ...utm
+      });
+    }
 
     // Track referral
     if (referrerId) {
@@ -711,7 +727,12 @@ export async function sendWarmupMessages() {
   const { getAllUsers } = await import('./database.js');
   const users = getAllUsers({});
   for (const user of users) {
-    if (!user.warmup_active || user.booking_status === 'booked') continue;
+    // FIX: Skip users who are already booked, confirmed or completed
+    if (!user.warmup_active) continue;
+    if (['booked', 'confirmed', 'completed'].includes(user.booking_status)) {
+      updateUser(user.telegram_id, { warmup_active: 0 });
+      continue;
+    }
     if (!user.scenario && user.funnel_stage !== 'quiz_completed') continue;
     const nextDay = (user.warmup_day || 0) + 1;
     const scenario = user.scenario;
