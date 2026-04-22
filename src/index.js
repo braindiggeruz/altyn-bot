@@ -64,7 +64,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '3.1.0',
+        version: '3.2.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
@@ -158,7 +158,7 @@ async function startApp() {
     });
 
     const mode = process.env.RAILWAY_PUBLIC_DOMAIN ? 'WEBHOOK' : 'POLLING';
-    console.log(`✅ Altyn Therapy System v3.1.0 started (${mode} mode, PostgreSQL)`);
+    console.log(`✅ Altyn Therapy System v3.2.0 started (${mode} mode, PostgreSQL)`);
     console.log(`🤖 Bot: @altyntherapybot`);
     console.log(`🌐 Admin: http://localhost:${PORT}`);
     console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);
