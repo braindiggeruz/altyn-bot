@@ -583,7 +583,7 @@ export function initBot(token, app) {
     }
   });
 
-  console.log('🤖 Altyn Therapy Bot v3.2.0 started');
+  console.log('🤖 Altyn Therapy Bot v4.1.0 started');
   return bot;
 }
 

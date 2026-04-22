@@ -89,7 +89,7 @@ async function startApp() {
     });
 
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🌐 Admin panel v4.0.0 running on port ${PORT}`);
+      console.log(`🌐 Admin panel v4.1.0 running on port ${PORT}`);
     }).on('error', (err) => {
       console.error('Server error:', err.message);
       if (err.code === 'EADDRINUSE') {
@@ -158,7 +158,7 @@ async function startApp() {
     });
 
     const mode = process.env.RAILWAY_PUBLIC_DOMAIN ? 'WEBHOOK' : 'POLLING';
-    console.log(`✅ Altyn Therapy System v4.0.0 started (${mode} mode, PostgreSQL)`);
+    console.log(`✅ Altyn Therapy System v4.1.0 started (${mode} mode, PostgreSQL)`);
     console.log(`🤖 Bot: @altyntherapybot`);
     console.log(`🌐 Admin: http://localhost:${PORT}`);
     console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);

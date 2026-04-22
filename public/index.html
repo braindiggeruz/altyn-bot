@@ -377,27 +377,44 @@
   </div>
 
 <script>
+<script>
 let TOKEN=localStorage.getItem('altyn_token');const API='/api';let charts={};
 
 async function doLogin(){
   const u=document.getElementById('login-user').value,p=document.getElementById('login-pass').value;
-  try{const r=await fetch(`${API}/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
-  const d=await r.json();if(d.token){TOKEN=d.token;localStorage.setItem('altyn_token',TOKEN);document.getElementById('login-screen').style.display='none';initApp()}
-  else{document.getElementById('login-error').textContent=d.error||'Ошибка';document.getElementById('login-error').style.display='block'}}catch(e){document.getElementById('login-error').textContent='Ошибка соединения';document.getElementById('login-error').style.display='block'}}
+  try{
+    const r=await fetch(`${API}/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    const d=await r.json();
+    if(d.token){TOKEN=d.token;localStorage.setItem('altyn_token',TOKEN);document.getElementById('login-screen').style.display='none';initApp()}
+    else{document.getElementById('login-error').textContent=d.error||'Ошибка';document.getElementById('login-error').style.display='block'}
+  }catch(e){document.getElementById('login-error').textContent='Ошибка соединения';document.getElementById('login-error').style.display='block'}
+}
 
-async function api(path,opts={}){const r=await fetch(`${API}${path}`,{...opts,headers:{'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json',...(opts.headers||{})}});
-if(r.status===401){localStorage.removeItem('altyn_token');location.reload();return null}if(r.headers.get('content-type')?.includes('text/csv'))return r;return r.json()}
+async function api(path,opts={}){
+  const r=await fetch(`${API}${path}`,{...opts,headers:{'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json',...(opts.headers||{})}});
+  if(r.status===401){localStorage.removeItem('altyn_token');location.reload();return null}
+  if(r.headers.get('content-type')?.includes('text/csv'))return r;
+  return r.json();
+}
 
 function initApp(){setupNav();loadDashboard()}
 if(TOKEN){fetch(`${API}/auth/me`,{headers:{'Authorization':`Bearer ${TOKEN}`}}).then(r=>{if(r.ok){document.getElementById('login-screen').style.display='none';initApp()}}).catch(()=>{})}
 
-function setupNav(){document.querySelectorAll('.nav-item').forEach(item=>{item.addEventListener('click',()=>{
-  document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));item.classList.add('active');
-  const p=item.dataset.page;document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  document.getElementById(`page-${p}`).classList.add('active');document.querySelector('.sidebar').classList.remove('open');
-  const L={dashboard:loadDashboard,funnel:loadFunnel,analytics:loadAnalytics,users:loadUsers,broadcasts:loadBroadcasts,
-    templates:loadTemplates,utm:loadUtmLinks,referrals:loadReferrals,heatmap:loadHeatmap,cohorts:loadCohorts,'exit-survey':loadExitSurvey,'ab-testing':loadAbTests};
-  if(L[p])L[p]()})})}
+function setupNav(){
+  document.querySelectorAll('.nav-item').forEach(item=>{
+    item.addEventListener('click',()=>{
+      document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
+      item.classList.add('active');
+      const p=item.dataset.page;
+      document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+      document.getElementById(`page-${p}`).classList.add('active');
+      document.querySelector('.sidebar').classList.remove('open');
+      const L={dashboard:loadDashboard,funnel:loadFunnel,analytics:loadAnalytics,users:loadUsers,broadcasts:loadBroadcasts,
+        templates:loadTemplates,utm:loadUtmLinks,referrals:loadReferrals,heatmap:loadHeatmap,cohorts:loadCohorts,'exit-survey':loadExitSurvey,'ab-testing':loadAbTests};
+      if(L[p])L[p]();
+    });
+  });
+}
 
 async function loadDashboard(){
   const s=await api('/dashboard');if(!s)return;
@@ -409,12 +426,15 @@ async function loadDashboard(){
     <div class="stat-card"><i class="fas fa-fire icon"></i><div class="label">На прогреве</div><div class="value">${s.warmupActive}</div></div>
     <div class="stat-card"><i class="fas fa-calendar-day icon"></i><div class="label">Сегодня</div><div class="value" style="color:var(--cyan)">${s.todayUsers}</div></div>`;
   if(s.dailyStats?.length)renderChart('chart-growth','line',{labels:s.dailyStats.map(d=>d.date.slice(5)),datasets:[{label:'Новые',data:s.dailyStats.map(d=>d.count),borderColor:'#d4a853',backgroundColor:'rgba(212,168,83,0.1)',fill:true,tension:.4,pointRadius:3}]});
-  if(s.scenarios?.length){const c={savior:'#60a5fa',fear:'#f87171',control:'#fb923c',freeze:'#a78bfa'},n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
-    renderChart('chart-scenarios','doughnut',{labels:s.scenarios.map(x=>n[x.scenario]||x.scenario),datasets:[{data:s.scenarios.map(x=>x.count),backgroundColor:s.scenarios.map(x=>c[x.scenario]||'#666')}]},{plugins:{legend:{position:'bottom',labels:{color:'#9898b0',font:{size:11}}}}})}
+  if(s.scenarios?.length){
+    const c={savior:'#60a5fa',fear:'#f87171',control:'#fb923c',freeze:'#a78bfa'},n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+    renderChart('chart-scenarios','doughnut',{labels:s.scenarios.map(x=>n[x.scenario]||x.scenario),datasets:[{data:s.scenarios.map(x=>x.count),backgroundColor:s.scenarios.map(x=>c[x.scenario]||'#666')}]},{plugins:{legend:{position:'bottom',labels:{color:'#9898b0',font:{size:11}}}}});
+  }
   if(s.sources?.length)renderChart('chart-sources','bar',{labels:s.sources.map(x=>x.source),datasets:[{label:'Пользователи',data:s.sources.map(x=>x.count),backgroundColor:['#d4a853','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c']}]});
   const cv=await api('/analytics/conversion-by-source');
   if(cv?.length)document.getElementById('conversion-by-source').innerHTML=`<table><thead><tr><th>Источник</th><th>Всего</th><th>Квиз</th><th>Запись</th><th>CR</th></tr></thead>
-    <tbody>${cv.map(x=>`<tr><td><span class="tag tag-blue">${x.source}</span></td><td>${x.total}</td><td>${x.quiz_done}</td><td>${x.booked}</td><td><span class="tag ${x.conversion_rate>10?'tag-green':'tag-gold'}">${x.conversion_rate}%</span></td></tr>`).join('')}</tbody></table>`}
+    <tbody>${cv.map(x=>`<tr><td><span class="tag tag-blue">${x.source}</span></td><td>${x.total}</td><td>${x.quiz_done}</td><td>${x.booked}</td><td><span class="tag ${x.conversion_rate>10?'tag-green':'tag-gold'}">${x.conversion_rate}%</span></td></tr>`).join('')}</tbody></table>`;
+}
 
 async function loadFunnel(){
   const d=await api('/dashboard/funnel');if(!d)return;
@@ -423,26 +443,38 @@ async function loadFunnel(){
   const w=await api('/analytics/warmup-effectiveness');
   if(w?.length)renderChart('chart-warmup','bar',{labels:w.map(x=>`День ${x.warmup_day}`),datasets:[{label:'Всего',data:w.map(x=>x.total),backgroundColor:'rgba(96,165,250,0.5)'},{label:'Конверсия',data:w.map(x=>x.converted),backgroundColor:'rgba(74,222,128,0.8)'}]});
   const sc=await api('/analytics/scenarios');
-  if(sc?.length){const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
-    document.getElementById('scenario-conversion').innerHTML=sc.map(s=>{const r=s.count>0?Math.round(s.booked/s.count*100):0;return`<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:600">${n[s.scenario]||s.scenario}</span><span style="font-size:12px;color:var(--text3)">${s.booked}/${s.count} (${r}%)</span></div><div class="progress"><div class="progress-fill" style="width:${r}%;background:var(--gold)"></div></div></div>`}).join('')}}
+  if(sc?.length){
+    const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+    document.getElementById('scenario-conversion').innerHTML=sc.map(s=>{
+      const r=s.count>0?Math.round(s.booked/s.count*100):0;
+      return`<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:13px;font-weight:600">${n[s.scenario]||s.scenario}</span><span style="font-size:12px;color:var(--text3)">${s.booked}/${s.count} (${r}%)</span></div><div class="progress"><div class="progress-fill" style="width:${r}%;background:var(--gold)"></div></div></div>`;
+    }).join('');
+  }
+}
 
 async function loadAnalytics(){
   const days=document.getElementById('analytics-period').value;
   const ev=await api(`/analytics/events?days=${days}`);
-  if(ev?.length){const types=[...new Set(ev.map(e=>e.event_type))],dates=[...new Set(ev.map(e=>e.date))].sort(),colors=['#d4a853','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c','#22d3ee'];
-    renderChart('chart-events','line',{labels:dates.map(d=>d.slice(5)),datasets:types.slice(0,7).map((t,i)=>({label:t,data:dates.map(d=>ev.find(e=>e.event_type===t&&e.date===d)?.count||0),borderColor:colors[i],tension:.3,pointRadius:2}))})}
+  if(ev?.length){
+    const types=[...new Set(ev.map(e=>e.event_type))],dates=[...new Set(ev.map(e=>e.date))].sort(),colors=['#d4a853','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c','#22d3ee'];
+    renderChart('chart-events','line',{labels:dates.map(d=>d.slice(5)),datasets:types.slice(0,7).map((t,i)=>({label:t,data:dates.map(d=>ev.find(e=>e.event_type===t&&e.date===d)?.count||0),borderColor:colors[i],tension:.3,pointRadius:2}))});
+  }
   const src=await api('/analytics/conversion-by-source');
   if(src?.length)document.getElementById('sources-table').innerHTML=`<table><thead><tr><th>Источник</th><th>Всего</th><th>Квиз</th><th>Запись</th><th>CR</th></tr></thead><tbody>${src.map(s=>`<tr><td>${s.source}</td><td>${s.total}</td><td>${s.quiz_done}</td><td>${s.booked}</td><td><span class="tag tag-gold">${s.conversion_rate}%</span></td></tr>`).join('')}</tbody></table>`;
   const sc=await api('/analytics/scenarios');
-  if(sc?.length){const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
-    document.getElementById('scenarios-table').innerHTML=`<table><thead><tr><th>Сценарий</th><th>Всего</th><th>Запись</th><th>Ср.день</th></tr></thead><tbody>${sc.map(s=>`<tr><td>${n[s.scenario]||s.scenario}</td><td>${s.count}</td><td>${s.booked}</td><td>${s.avg_warmup_day?s.avg_warmup_day.toFixed(1):'—'}</td></tr>`).join('')}</tbody></table>`}}
+  if(sc?.length){
+    const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+    document.getElementById('scenarios-table').innerHTML=`<table><thead><tr><th>Сценарий</th><th>Всего</th><th>Запись</th><th>Ср.день</th></tr></thead><tbody>${sc.map(s=>`<tr><td>${n[s.scenario]||s.scenario}</td><td>${s.count}</td><td>${s.booked}</td><td>${s.avg_warmup_day?s.avg_warmup_day.toFixed(1):'—'}</td></tr>`).join('')}</tbody></table>`;
+  }
+}
 
 async function loadUsers(){
   const p=new URLSearchParams(),se=document.getElementById('user-search').value,sc=document.getElementById('filter-scenario').value,st=document.getElementById('filter-stage').value,bk=document.getElementById('filter-booking').value;
   if(se)p.set('search',se);if(sc)p.set('scenario',sc);if(st)p.set('funnel_stage',st);if(bk)p.set('booking_status',bk);p.set('limit','100');
   const d=await api(`/users?${p}`);if(!d)return;
-  const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'},sn={new:'Новый',started:'Начал',quiz:'В квизе',quiz_completed:'Квиз ✓',booking:'Запись',booked:'Записан',completed:'Готово'},
-    sc2={new:'',started:'tag-blue',quiz:'tag-purple',quiz_completed:'tag-gold',booking:'tag-gold',booked:'tag-green',completed:'tag-green'};
+  const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+  const sn={new:'Новый',started:'Начал',quiz:'В квизе',quiz_completed:'Квиз ✓',booking:'Запись',booked:'Записан',completed:'Готово'};
+  const sc2={new:'',started:'tag-blue',quiz:'tag-purple',quiz_completed:'tag-gold',booking:'tag-gold',booked:'tag-green',completed:'tag-green'};
   document.getElementById('users-table').innerHTML=`<div style="margin-bottom:8px;font-size:12px;color:var(--text3)">Найдено: ${d.total}</div>
     <table><thead><tr><th>Пользователь</th><th>Сценарий</th><th>Этап</th><th>Статус</th><th>Источник</th><th>Дата</th><th></th></tr></thead>
     <tbody>${d.users.map(u=>`<tr><td><strong>${u.first_name||''} ${u.last_name||''}</strong><br><span style="color:var(--text3);font-size:11px">${u.username?'@'+u.username:u.telegram_id}</span></td>
@@ -451,11 +483,13 @@ async function loadUsers(){
       <td>${u.booking_status==='booked'?'<span class="tag tag-green">✓</span>':u.booking_status==='completed'?'<span class="tag tag-green">✓✓</span>':'—'}</td>
       <td style="font-size:11px;color:var(--text3)">${u.source||'—'}</td>
       <td style="font-size:11px;color:var(--text3)">${u.created_at?.slice(0,10)||''}</td>
-      <td><button class="btn btn-sm btn-outline" onclick="showUserDetail(${u.telegram_id})">👁</button></td></tr>`).join('')}</tbody></table>`}
+      <td><button class="btn btn-sm btn-outline" onclick="showUserDetail(${u.telegram_id})">👁</button></td></tr>`).join('')}</tbody></table>`;
+}
 
 async function showUserDetail(tid){
   const u=await api(`/users/${tid}`);if(!u)return;
-  const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};let tags=[];try{tags=JSON.parse(u.tags||'[]')}catch(e){}
+  const n={savior:'Спасатель',fear:'Страх',control:'Контроль',freeze:'Замирание'};
+  let tags=[];try{tags=JSON.parse(u.tags||'[]')}catch(e){}
   document.getElementById('user-detail-content').innerHTML=`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="panel"><div class="panel-title" style="margin-bottom:12px">📋 Информация</div>
@@ -489,31 +523,45 @@ async function showUserDetail(tid){
         <button class="btn btn-sm btn-green" onclick="updateUserStatus(${u.telegram_id},'booking_status','booked')">✅ Записан</button>
         <button class="btn btn-sm btn-blue" onclick="updateUserStatus(${u.telegram_id},'booking_status','completed')">✓ Завершён</button>
         <button class="btn btn-sm btn-outline" onclick="updateUserStatus(${u.telegram_id},'warmup_active',${u.warmup_active?0:1})">${u.warmup_active?'⏸ Стоп прогрев':'▶️ Вкл прогрев'}</button></div></div>
-    </div>`;showModal('user-modal')}
+    </div>`;
+  showModal('user-modal');
+}
 
 async function addTag(tid){const t=document.getElementById('new-tag-input').value.trim();if(!t)return;await api(`/users/${tid}/tags`,{method:'POST',body:JSON.stringify({tag:t})});showUserDetail(tid);toast('Тег добавлен')}
 async function removeTag(tid,tag){await api(`/users/${tid}/tags/${tag}`,{method:'DELETE'});showUserDetail(tid);toast('Тег удалён')}
 async function saveNotes(tid){await api(`/users/${tid}`,{method:'PUT',body:JSON.stringify({notes:document.getElementById('user-notes').value})});toast('Сохранено')}
 async function updateUserStatus(tid,f,v){await api(`/users/${tid}`,{method:'PUT',body:JSON.stringify({[f]:v})});showUserDetail(tid);toast('Обновлено')}
-async function exportCSV(){const r=await fetch(`${API}/users/export/csv`,{headers:{'Authorization':`Bearer ${TOKEN}`}});const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='altyn_export.csv';a.click();URL.revokeObjectURL(u);toast('CSV скачан')}
+async function exportCSV(){
+  const r=await fetch(`${API}/users/export/csv`,{headers:{'Authorization':`Bearer ${TOKEN}`}});
+  const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');
+  a.href=u;a.download='altyn_export.csv';a.click();URL.revokeObjectURL(u);toast('CSV скачан');
+}
 
 async function loadBroadcasts(){
   const b=await api('/broadcasts');if(!b)return;
-  const sn={draft:'Черновик',sending:'Отправка...',sent:'Отправлено',scheduled:'Запланировано',error:'Ошибка'},sc={draft:'',sending:'tag-blue',sent:'tag-green',scheduled:'tag-gold',error:'tag-red'};
+  const sn={draft:'Черновик',sending:'Отправка...',sent:'Отправлено',scheduled:'Запланировано',error:'Ошибка'};
+  const sc={draft:'',sending:'tag-blue',sent:'tag-green',scheduled:'tag-gold',error:'tag-red'};
   document.getElementById('broadcasts-table').innerHTML=b.length?`<table><thead><tr><th>Название</th><th>Сегмент</th><th>Статус</th><th>Отправлено</th><th>Ошибки</th><th>Дата</th><th></th></tr></thead>
     <tbody>${b.map(x=>`<tr><td><strong>${x.title}</strong>${x.ab_variant?` <span class="tag tag-purple">${x.ab_variant}</span>`:''}</td>
       <td><span class="tag">${x.segment}</span></td><td><span class="tag ${sc[x.status]||''}">${sn[x.status]||x.status}</span></td>
       <td>${x.sent_count||'—'}</td><td>${x.failed_count||'—'}</td><td style="font-size:11px;color:var(--text3)">${(x.sent_at||x.created_at)?.slice(0,16)||''}</td>
-      <td>${x.status==='draft'?`<button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${x.id})">📤</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет рассылок</p>'}
+      <td>${x.status==='draft'?`<button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${x.id})">📤</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет рассылок</p>';
+}
 
-async function updateSegmentCount(){const s=document.getElementById('bc-segment').value;const d=await api(`/broadcasts/segment-count/${s}`);if(d)document.getElementById('segment-count').textContent=`Получателей: ${d.count}`}
+async function updateSegmentCount(){
+  const s=document.getElementById('bc-segment').value;
+  const d=await api(`/broadcasts/segment-count/${s}`);
+  if(d)document.getElementById('segment-count').textContent=`Получателей: ${d.count}`;
+}
 
 async function saveBroadcast(mode){
-  const t=document.getElementById('bc-title').value,c=document.getElementById('bc-content').value;if(!t||!c)return toast('Заполните поля',true);
+  const t=document.getElementById('bc-title').value,c=document.getElementById('bc-content').value;
+  if(!t||!c)return toast('Заполните поля',true);
   const sch=document.getElementById('bc-schedule').value;
   const d=await api('/broadcasts',{method:'POST',body:JSON.stringify({title:t,content:c,image_url:document.getElementById('bc-image').value||null,segment:document.getElementById('bc-segment').value,status:sch?'scheduled':'draft',scheduled_at:sch||null})});
   if(mode==='send'&&d?.id)await api(`/broadcasts/${d.id}/send`,{method:'POST'});
-  closeModal('broadcast-modal');loadBroadcasts();toast(mode==='send'?'Отправляется!':sch?'Запланировано':'Черновик сохранён')}
+  closeModal('broadcast-modal');loadBroadcasts();toast(mode==='send'?'Отправляется!':sch?'Запланировано':'Черновик сохранён');
+}
 
 async function sendBroadcastById(id){if(!confirm('Отправить?'))return;await api(`/broadcasts/${id}/send`,{method:'POST'});loadBroadcasts();toast('Отправляется!')}
 
@@ -523,10 +571,15 @@ async function loadTemplates(){
   document.getElementById('templates-list').innerHTML=t.length?t.map(x=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px;border-bottom:1px solid var(--border)">
     <div style="flex:1"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><strong>${x.name}</strong><span class="tag">${cn[x.category]||x.category}</span></div>
     <div style="font-size:12px;color:var(--text3);max-height:40px;overflow:hidden">${x.content.slice(0,150)}</div></div>
-    <div style="display:flex;gap:6px"><button class="btn btn-sm btn-gold" onclick="useTemplate(${x.id})">Исп.</button><button class="btn btn-sm btn-outline" onclick="delTemplate(${x.id})">🗑</button></div></div>`).join(''):'<p style="text-align:center;color:var(--text3);padding:40px">Нет шаблонов</p>'}
+    <div style="display:flex;gap:6px"><button class="btn btn-sm btn-gold" onclick="useTemplate(${x.id})">Исп.</button><button class="btn btn-sm btn-outline" onclick="delTemplate(${x.id})">🗑</button></div></div>`).join(''):'<p style="text-align:center;color:var(--text3);padding:40px">Нет шаблонов</p>';
+}
 
-async function saveTemplate(){const n=document.getElementById('tpl-name').value,c=document.getElementById('tpl-content').value;if(!n||!c)return toast('Заполните',true);
-  await api('/templates',{method:'POST',body:JSON.stringify({name:n,content:c,category:document.getElementById('tpl-category').value})});closeModal('template-modal');loadTemplates();toast('Сохранён')}
+async function saveTemplate(){
+  const n=document.getElementById('tpl-name').value,c=document.getElementById('tpl-content').value;
+  if(!n||!c)return toast('Заполните',true);
+  await api('/templates',{method:'POST',body:JSON.stringify({name:n,content:c,category:document.getElementById('tpl-category').value})});
+  closeModal('template-modal');loadTemplates();toast('Сохранён');
+}
 async function delTemplate(id){if(!confirm('Удалить?'))return;await api(`/templates/${id}`,{method:'DELETE'});loadTemplates()}
 function useTemplate(id){api('/templates').then(t=>{const x=t.find(a=>a.id===id);if(x){document.getElementById('bc-title').value=x.name;document.getElementById('bc-content').value=x.content;showModal('broadcast-modal');updateSegmentCount()}})}
 
@@ -534,23 +587,29 @@ async function loadUtmLinks(){
   const l=await api('/utm-links');if(!l)return;
   document.getElementById('utm-list').innerHTML=l.length?`<table><thead><tr><th>Название</th><th>Источник</th><th>Канал</th><th>Кампания</th><th>Ссылка</th><th></th></tr></thead>
     <tbody>${l.map(x=>`<tr><td><strong>${x.name}</strong></td><td><span class="tag tag-blue">${x.source}</span></td><td>${x.medium||'—'}</td><td>${x.campaign||'—'}</td>
-      <td><span class="copy-link" onclick="copyText('${x.full_link}')">${x.full_link}</span></td><td><button class="btn btn-sm btn-outline" onclick="delUtm(${x.id})">🗑</button></td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет ссылок</p>'}
+      <td><span class="copy-link" onclick="copyText('${x.full_link}')">${x.full_link}</span></td><td><button class="btn btn-sm btn-outline" onclick="delUtm(${x.id})">🗑</button></td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет ссылок</p>';
+}
 
 function showUtmModal(){showModal('utm-modal');updateUtmPreview()}
-function updateUtmPreview(){const s=document.getElementById('utm-source').value,m=document.getElementById('utm-medium').value||'link',c=document.getElementById('utm-campaign').value||'default';
-  document.getElementById('utm-preview').textContent=`https://t.me/altyntherapybot?start=${s}_${m}_${c}`}
-async function saveUtmLink(){const n=document.getElementById('utm-name').value;if(!n)return toast('Введите название',true);
+function updateUtmPreview(){
+  const s=document.getElementById('utm-source').value,m=document.getElementById('utm-medium').value||'link',c=document.getElementById('utm-campaign').value||'default';
+  document.getElementById('utm-preview').textContent=`https://t.me/altyntherapybot?start=${s}_${m}_${c}`;
+}
+async function saveUtmLink(){
+  const n=document.getElementById('utm-name').value;if(!n)return toast('Введите название',true);
   await api('/utm-links',{method:'POST',body:JSON.stringify({name:n,source:document.getElementById('utm-source').value,medium:document.getElementById('utm-medium').value,campaign:document.getElementById('utm-campaign').value})});
-  closeModal('utm-modal');loadUtmLinks();toast('Создана')}
+  closeModal('utm-modal');loadUtmLinks();toast('Создана');
+}
 async function delUtm(id){if(!confirm('Удалить?'))return;await api(`/utm-links/${id}`,{method:'DELETE'});loadUtmLinks()}
 
 async function loadReferrals(){
   const s=await api('/dashboard'),r=await api('/analytics/referrals');
-  document.getElementById('referral-stats').innerHTML=`<div class="stat-card"><div class="label">Рефералов</div><div class="value">${s?.totalReferrals||0}</div></div>
+  document.getElementById('referral-stats').innerHTML=`
+    <div class="stat-card"><div class="label">Рефералов</div><div class="value">${s?.totalReferrals||0}</div></div>
     <div class="stat-card"><div class="label">Конверсии</div><div class="value" style="color:var(--green)">${s?.referralConversions||0}</div></div>
     <div class="stat-card"><div class="label">Рефереров</div><div class="value">${r?.length||0}</div></div>`;
   document.getElementById('referrals-table').innerHTML=r?.length?`<table><thead><tr><th>Реферер</th><th>Username</th><th>Приглашено</th><th>Конверсии</th></tr></thead>
-    <tbody>${r.map(x=>`<tr><td>${x.first_name||x.referrer_telegram_id}</td><td>${x.username?'@'+x.username:'—'}</td><td>${x.total_referrals}</td><td><span class="tag tag-green">${x.conversions}</span></td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:20px">Пока нет</p>'}
+    <tbody>${r.map(x=>`<tr><td>${x.first_name||x.referrer_telegram_id}</td><td>${x.username?'@'+x.username:'—'}</td><td>${x.total_referrals}</td><td><span class="tag tag-green">${x.conversions}</span></td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:20px">Пока нет</p>';
 }
 
 async function loadAbTests(){
@@ -562,37 +621,59 @@ async function loadAbTests(){
   if(!container)return;
   const sn={draft:'Черновик',sending:'Отправка...',sent:'Отправлено',scheduled:'Запланировано',error:'Ошибка'};
   const sc={draft:'',sending:'tag-blue',sent:'tag-green',scheduled:'tag-gold',error:'tag-red'};
-  if(!Object.keys(groups).length){container.innerHTML='<p style="text-align:center;color:var(--text3);padding:40px">Нет A/B тестов. Создайте первый!</p>';return;}
+  if(!Object.keys(groups).length){
+    container.innerHTML='<p style="text-align:center;color:var(--text3);padding:40px">Нет A/B тестов. Создайте первый!</p>';
+    return;
+  }
   container.innerHTML=Object.entries(groups).map(([gid,variants])=>{
     const total=variants.reduce((s,v)=>s+(v.sent_count||0),0);
     const best=variants.reduce((a,b)=>(a.sent_count||0)>(b.sent_count||0)?a:b,variants[0]);
     return`<div class="panel" style="margin-bottom:16px"><div class="panel-header"><div class="panel-title">🧪 A/B Тест #${gid}</div><span class="tag tag-blue">Вариантов: ${variants.length}</span></div>
       <table><thead><tr><th>Вариант</th><th>Название</th><th>Статус</th><th>Отправлено</th><th>Ошибки</th><th></th></tr></thead>
-      <tbody>${variants.map(v=>`<tr style="${v.id===best.id&&v.sent_count>0?'background:rgba(74,222,128,0.05)':''}"><td><span class="tag tag-purple">${v.ab_variant}</span>${v.id===best.id&&v.sent_count>0?' 🏆':''}</td>
-        <td><strong>${v.title}</strong></td><td><span class="tag ${sc[v.status]||''}">${sn[v.status]||v.status}</span></td>
+      <tbody>${variants.map(v=>`<tr style="${v.id===best.id&&v.sent_count>0?'background:rgba(74,222,128,0.05)':''}">
+        <td><span class="tag tag-purple">${v.ab_variant}</span>${v.id===best.id&&v.sent_count>0?' 🏆':''}</td>
+        <td><strong>${v.title}</strong></td>
+        <td><span class="tag ${sc[v.status]||''}">${sn[v.status]||v.status}</span></td>
         <td>${v.sent_count||'—'}</td><td>${v.failed_count||'—'}</td>
-        <td>${v.status==='draft'?`<button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${v.id})">📤</button>`:''}</td></tr>`).join('')}</tbody></table>
-      <div style="margin-top:12px;font-size:12px;color:var(--text3)">Всего отправлено: ${total}</div></div>`}).join('');}
-async function createAbTest(){const t=document.getElementById('ab-title').value,a=document.getElementById('ab-content-a').value,b=document.getElementById('ab-content-b').value;
+        <td>${v.status==='draft'?`<button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${v.id})">📤</button>`:''}</td>
+      </tr>`).join('')}</tbody></table>
+      <div style="margin-top:12px;font-size:12px;color:var(--text3)">Всего отправлено: ${total}</div></div>`;
+  }).join('');
+}
+
+async function createAbTest(){
+  const t=document.getElementById('ab-title').value,a=document.getElementById('ab-content-a').value,b=document.getElementById('ab-content-b').value;
   if(!t||!a||!b)return toast('Заполните',true);
   await api('/broadcasts/ab-test',{method:'POST',body:JSON.stringify({title:t,segment:document.getElementById('ab-segment').value,variants:[{content:a},{content:b}]})});
-  closeModal('ab-test-modal');loadAbTests();toast('A/B тест создан!')}
+  closeModal('ab-test-modal');loadAbTests();toast('A/B тест создан!');
+}
 
 async function loadHeatmap(){
   const d=await api('/dashboard/heatmap');if(!d)return;
   const days=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],mx=Math.max(...d.map(x=>x.count),1);
-  let h='<div class="heatmap"><div></div>';for(let i=0;i<24;i++)h+=`<div class="heatmap-header">${i}</div>`;
-  for(let day=0;day<7;day++){h+=`<div class="heatmap-label">${days[day]}</div>`;
-    for(let hr=0;hr<24;hr++){const c=d.find(x=>x.weekday===day&&x.hour===hr),cnt=c?.count||0,int=cnt/mx;
-      h+=`<div class="heatmap-cell" style="background:${int>0?`rgba(212,168,83,${.1+int*.9})`:'var(--bg3)'}" title="${days[day]} ${hr}:00 — ${cnt}">${cnt||''}</div>`}}
-  h+='</div>';document.getElementById('heatmap-container').innerHTML=h}
+  let h='<div class="heatmap"><div></div>';
+  for(let i=0;i<24;i++)h+=`<div class="heatmap-header">${i}</div>`;
+  for(let day=0;day<7;day++){
+    h+=`<div class="heatmap-label">${days[day]}</div>`;
+    for(let hr=0;hr<24;hr++){
+      const c=d.find(x=>x.weekday===day&&x.hour===hr),cnt=c?.count||0,int=cnt/mx;
+      h+=`<div class="heatmap-cell" style="background:${int>0?`rgba(212,168,83,${.1+int*.9})`:'var(--bg3)'}" title="${days[day]} ${hr}:00 — ${cnt}">${cnt||''}</div>`;
+    }
+  }
+  h+='</div>';
+  document.getElementById('heatmap-container').innerHTML=h;
+}
 
 async function loadCohorts(){
   const c=await api('/analytics/cohorts');if(!c?.length)return;
   document.getElementById('cohorts-table').innerHTML=`<table><thead><tr><th>Неделя</th><th>Всего</th><th>Квиз</th><th>Запись</th><th>Завершили</th><th>CR Квиз</th><th>CR Запись</th></tr></thead>
-    <tbody>${c.map(x=>{const cq=x.total>0?Math.round(x.quiz_completed/x.total*100):0,cb=x.total>0?Math.round(x.booked/x.total*100):0;
+    <tbody>${c.map(x=>{
+      const cq=x.total>0?Math.round(x.quiz_completed/x.total*100):0,cb=x.total>0?Math.round(x.booked/x.total*100):0;
       return`<tr><td><strong>${x.cohort_week}</strong></td><td>${x.total}</td><td>${x.quiz_completed}</td><td>${x.booked}</td><td>${x.completed}</td>
-        <td><span class="tag ${cq>50?'tag-green':'tag-gold'}">${cq}%</span></td><td><span class="tag ${cb>10?'tag-green':cb>0?'tag-gold':''}">${cb}%</span></td></tr>`}).join('')}</tbody></table>`}
+        <td><span class="tag ${cq>50?'tag-green':'tag-gold'}">${cq}%</span></td>
+        <td><span class="tag ${cb>10?'tag-green':cb>0?'tag-gold':''}">${cb}%</span></td></tr>`;
+    }).join('')}</tbody></table>`;
+}
 
 async function loadExitSurvey(){
   const r=await api('/analytics/exit-reasons');if(!r)return;
@@ -600,16 +681,33 @@ async function loadExitSurvey(){
   const total=r.reduce((s,x)=>s+x.count,0);
   document.getElementById('exit-stats').innerHTML=`<div class="stat-card"><div class="label">Ответов</div><div class="value">${total}</div></div>
     ${r.slice(0,3).map(x=>`<div class="stat-card"><div class="label">${n[x.exit_reason]||x.exit_reason}</div><div class="value">${x.count}</div><div class="change">${total>0?Math.round(x.count/total*100):0}%</div></div>`).join('')}`;
-  if(r.length)renderChart('chart-exit','bar',{labels:r.map(x=>n[x.exit_reason]||x.exit_reason),datasets:[{label:'Ответы',data:r.map(x=>x.count),backgroundColor:['#fb923c','#60a5fa','#a78bfa','#4ade80','#f87171']}]},{indexAxis:'y'})}
+  if(r.length)renderChart('chart-exit','bar',{labels:r.map(x=>n[x.exit_reason]||x.exit_reason),datasets:[{label:'Ответы',data:r.map(x=>x.count),backgroundColor:['#fb923c','#60a5fa','#a78bfa','#4ade80','#f87171']}]},{indexAxis:'y'});
+}
 
-function renderChart(id,type,data,extra={}){if(charts[id])charts[id].destroy();const ctx=document.getElementById(id);if(!ctx)return;
-  charts[id]=new Chart(ctx,{type,data,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#9898b0',font:{size:11}}}},
-    scales:type==='doughnut'||type==='pie'?{}:{x:{ticks:{color:'#6868a0',font:{size:10}},grid:{color:'rgba(42,42,64,0.5)'}},y:{ticks:{color:'#6868a0',font:{size:10}},grid:{color:'rgba(42,42,64,0.5)'}}},...extra}})}
+function renderChart(id,type,data,extra={}){
+  if(charts[id])charts[id].destroy();
+  const ctx=document.getElementById(id);if(!ctx)return;
+  charts[id]=new Chart(ctx,{type,data,options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{labels:{color:'#9898b0',font:{size:11}}}},
+    scales:type==='doughnut'||type==='pie'?{}:{
+      x:{ticks:{color:'#6868a0',font:{size:10}},grid:{color:'rgba(42,42,64,0.5)'}},
+      y:{ticks:{color:'#6868a0',font:{size:10}},grid:{color:'rgba(42,42,64,0.5)'}}
+    },...extra}});
+}
 
 function showModal(id){document.getElementById(id).classList.add('show')}
 function closeModal(id){document.getElementById(id).classList.remove('show')}
-function toast(msg,err=false){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast show ${err?'error':''}`;setTimeout(()=>t.classList.remove('show'),3000)}
-function copyText(t){navigator.clipboard.writeText(t).then(()=>toast('Скопировано!')).catch(()=>{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');document.body.removeChild(a);toast('Скопировано!')})}
+function toast(msg,err=false){
+  const t=document.getElementById('toast');t.textContent=msg;
+  t.className=`toast show ${err?'error':''}`;
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+function copyText(t){
+  navigator.clipboard.writeText(t).then(()=>toast('Скопировано!')).catch(()=>{
+    const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);
+    a.select();document.execCommand('copy');document.body.removeChild(a);toast('Скопировано!');
+  });
+}
 </script>
 </body>
 </html>
