@@ -64,7 +64,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '4.0.0',
+        version: '4.1.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
