@@ -1,6 +1,11 @@
-# Алтын Therapy Bot — Telegram CRM v3.0.0
+# Алтын Therapy Bot — Telegram CRM v3.1.0
 
 Telegram бот с квизом, автоматическим прогревом и полноценной CRM-системой для проекта **Алтын Therapy**.
+
+## What's New in v3.1.0
+
+- **Improved Cron Logging** — All cron jobs now log timestamps for easy monitoring
+- **Better Error Handling** — Cron errors are caught and logged with details
 
 ## What's New in v3.0.0
 

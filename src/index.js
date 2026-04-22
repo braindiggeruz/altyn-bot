@@ -64,7 +64,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '3.0.0',
+        version: '3.1.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
@@ -104,14 +104,20 @@ async function startApp() {
 
     // Send warmup messages every day at 10:00 AM Almaty time (UTC+5 = 05:00 UTC)
     cron.schedule('0 5 * * *', () => {
-      console.log('⏰ Running warmup messages...');
-      sendWarmupMessages().catch(err => console.error('Warmup cron error:', err));
+      const now = new Date().toISOString();
+      console.log(`⏰ [${now}] CRON: Running warmup messages (10:00 Almaty)...`);
+      sendWarmupMessages()
+        .then(() => console.log(`✅ [${new Date().toISOString()}] CRON: Warmup messages done`))
+        .catch(err => console.error(`❌ CRON warmup error:`, err.message));
     });
 
     // Send reminders every 2 hours (for stuck quiz/booking users)
     cron.schedule('0 */2 * * *', () => {
-      console.log('⏰ Running reminders...');
-      sendReminders().catch(err => console.error('Reminders cron error:', err));
+      const now = new Date().toISOString();
+      console.log(`⏰ [${now}] CRON: Running reminders (every 2h)...`);
+      sendReminders()
+        .then(() => console.log(`✅ [${new Date().toISOString()}] CRON: Reminders done`))
+        .catch(err => console.error(`❌ CRON reminders error:`, err.message));
     });
 
     // Check for scheduled broadcasts every 5 minutes
@@ -119,6 +125,9 @@ async function startApp() {
       try {
         const { getScheduledBroadcasts, updateBroadcast } = await import('./database.js');
         const scheduled = await getScheduledBroadcasts();
+        if (scheduled.length > 0) {
+          console.log(`⏰ [${new Date().toISOString()}] CRON: Found ${scheduled.length} scheduled broadcast(s)`);
+        }
         for (const broadcast of scheduled) {
           console.log(`📤 Sending scheduled broadcast: ${broadcast.title}`);
           await updateBroadcast(broadcast.id, { status: 'sending' });
@@ -128,7 +137,7 @@ async function startApp() {
           });
         }
       } catch (err) {
-        // Silently ignore if no scheduled broadcasts
+        console.error('CRON broadcasts error:', err.message);
       }
     });
 
@@ -137,23 +146,27 @@ async function startApp() {
       try {
         const { getStats } = await import('./database.js');
         const stats = await getStats();
-        console.log('📊 Stats:', JSON.stringify({
+        console.log(`📊 [${new Date().toISOString()}] CRON Stats:`, JSON.stringify({
           total: stats.total,
           quizCompleted: stats.quizCompleted,
           booked: stats.booked,
           conversionRate: stats.conversionRate
         }));
       } catch (err) {
-        console.error('Stats cron error:', err);
+        console.error('CRON stats error:', err.message);
       }
     });
 
     const mode = process.env.RAILWAY_PUBLIC_DOMAIN ? 'WEBHOOK' : 'POLLING';
-    console.log(`✅ Altyn Therapy System v3.0.0 started (${mode} mode, PostgreSQL)`);
+    console.log(`✅ Altyn Therapy System v3.1.0 started (${mode} mode, PostgreSQL)`);
     console.log(`🤖 Bot: @altyntherapybot`);
     console.log(`🌐 Admin: http://localhost:${PORT}`);
     console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);
-    console.log('📋 Cron jobs: warmup (10:00 Almaty), reminders (every 2h), broadcasts (every 5m)');
+    console.log('📋 Cron jobs:');
+    console.log('   - Warmup: daily at 10:00 Almaty (05:00 UTC)');
+    console.log('   - Reminders: every 2 hours (quiz stuck, booking stuck)');
+    console.log('   - Broadcasts: every 5 minutes (scheduled)');
+    console.log('   - Stats: every 6 hours');
 
   } catch (err) {
     console.error('❌ Failed to start application:', err);
