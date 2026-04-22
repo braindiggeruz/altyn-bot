@@ -50,7 +50,7 @@ export async function initDatabase() {
         phone TEXT,
         scenario TEXT,
         quiz_answers TEXT,
-        quiz_score INTEGER DEFAULT 0,
+        quiz_score TEXT DEFAULT '0',
         funnel_stage TEXT DEFAULT 'new',
         warmup_day INTEGER DEFAULT 0,
         warmup_active INTEGER DEFAULT 1,
@@ -173,6 +173,13 @@ export async function initDatabase() {
       } catch (e) {
         // Column might already exist
       }
+    }
+
+    // Fix quiz_score column type: must be TEXT to store JSON scores
+    try {
+      await client.query(`ALTER TABLE users ALTER COLUMN quiz_score TYPE TEXT USING quiz_score::TEXT`);
+    } catch (e) {
+      // Already TEXT or doesn't exist
     }
 
     console.log('✅ PostgreSQL database initialized');
