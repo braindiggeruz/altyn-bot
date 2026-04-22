@@ -108,8 +108,10 @@ export function initBot(token, app) {
     bot = new TelegramBot(token, { webHook: false });
 
     const webhookPath = `/bot${token}`;
-    bot.setWebHook(`${WEBHOOK_URL}${webhookPath}`)
-      .then(() => console.log('✅ Webhook set successfully'))
+    bot.setWebHook(`${WEBHOOK_URL}${webhookPath}`, {
+      allowed_updates: ['message', 'callback_query', 'my_chat_member', 'chat_member']
+    })
+      .then(() => console.log('✅ Webhook set successfully (with callback_query)'))
       .catch(err => console.error('❌ Webhook set error:', err.message));
 
     if (app) {
