@@ -211,7 +211,13 @@ router.post('/users/:telegramId/tasks', authMiddleware, (req, res) => {
 });
 
 router.put('/tasks/:id', authMiddleware, (req, res) => {
-  updateUserTask(parseInt(req.params.id), req.body);
+  // FIX: Whitelist allowed fields for task update
+  const allowed = ['title', 'description', 'status', 'due_date', 'priority'];
+  const fields = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) fields[key] = req.body[key];
+  }
+  updateUserTask(parseInt(req.params.id), fields);
   res.json({ success: true });
 });
 
@@ -443,6 +449,12 @@ router.get('/analytics/conversion-by-source', authMiddleware, (req, res) => {
     ORDER BY conversion_rate DESC
   `).all();
   res.json(data);
+});
+
+// Alias: /api/login -> /api/auth/login for convenience
+router.post('/login', (req, res, next) => {
+  req.url = '/auth/login';
+  router.handle(req, res, next);
 });
 
 export default router;

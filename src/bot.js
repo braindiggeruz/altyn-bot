@@ -78,11 +78,7 @@ async function removeKeyboard(chatId, messageId) {
 // HELPER: Phone number validation
 // ============================================================
 function isValidPhone(text) {
-  // Accepts: +7XXXXXXXXXX, 8XXXXXXXXXX, 87XXXXXXXXX, +998XXXXXXXXX, +7 777 123 45 67, etc.
   const cleaned = text.replace(/[\s\-\(\)\.]/g, '');
-  // Kazakhstan: +7 or 8 followed by 10 digits, or just 10 digits starting with 7
-  // Uzbekistan: +998 followed by 9 digits
-  // Generic: any + followed by 10-14 digits
   return /^(\+?[78]\d{10}|\+?998\d{9}|\+\d{10,14}|\d{10,11})$/.test(cleaned);
 }
 
@@ -101,8 +97,43 @@ function handleBlockedUser(telegramId, err) {
   return false;
 }
 
-export function initBot(token) {
-  bot = new TelegramBot(token, { polling: true });
+// ============================================================
+// INIT BOT — Webhook mode for Railway, polling for local dev
+// ============================================================
+export function initBot(token, app) {
+  const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : process.env.WEBHOOK_URL || null;
+
+  if (WEBHOOK_URL) {
+    // ========== WEBHOOK MODE (Production on Railway) ==========
+    console.log(`🔗 Starting bot in WEBHOOK mode: ${WEBHOOK_URL}/bot${token.slice(0, 5)}...`);
+    bot = new TelegramBot(token, { webHook: false });
+
+    // Set webhook with Telegram
+    const webhookPath = `/bot${token}`;
+    bot.setWebHook(`${WEBHOOK_URL}${webhookPath}`)
+      .then(() => console.log('✅ Webhook set successfully'))
+      .catch(err => console.error('❌ Webhook set error:', err.message));
+
+    // Express route to receive updates from Telegram
+    if (app) {
+      app.post(webhookPath, (req, res) => {
+        bot.processUpdate(req.body);
+        res.sendStatus(200);
+      });
+    }
+  } else {
+    // ========== POLLING MODE (Local development) ==========
+    console.log('🔄 Starting bot in POLLING mode (local dev)');
+    bot = new TelegramBot(token, {
+      polling: {
+        interval: 1000,
+        autoStart: true,
+        params: { timeout: 30 }
+      }
+    });
+  }
 
   // /start command
   bot.onText(/\/start(.*)/, async (msg, match) => {
@@ -126,6 +157,7 @@ export function initBot(token) {
       }
     }
 
+    // FIX: createUser with UPSERT — update name/username on repeat /start
     createUser({
       telegram_id: chatId,
       username: msg.from.username,
@@ -134,13 +166,10 @@ export function initBot(token) {
       source
     });
 
-    logEvent('start', chatId, { source, param, referrerId });
-    logMessage(chatId, 'in', 'command', '/start');
-
     // FIX: Don't reset booking data if user already booked/completed
     const existingUser = getUser(chatId);
     const alreadyBooked = existingUser && ['booked', 'confirmed', 'completed'].includes(existingUser.booking_status);
-    
+
     if (alreadyBooked) {
       // Just update source/utm, don't reset booking
       updateUser(chatId, {
@@ -242,7 +271,6 @@ export function initBot(token) {
     if (data === 'quiz_start') {
       logEvent('quiz_start', chatId, {});
       updateUser(chatId, { funnel_stage: 'quiz', quiz_answers: JSON.stringify([]) });
-      // Remove "Пройти тест" button from welcome message
       await removeKeyboard(chatId, messageId);
       await sendTyping(chatId, 500);
       await sendQuizQuestion(chatId, 0);
@@ -269,7 +297,6 @@ export function initBot(token) {
 
       // *** FIX: Duplicate answer protection ***
       if (answers.some(a => a.question === qIndex)) {
-        // Already answered this question — ignore duplicate click
         return;
       }
 
@@ -278,7 +305,6 @@ export function initBot(token) {
 
       // Remove buttons from the answered question
       await removeKeyboard(chatId, messageId);
-
       logMessage(chatId, 'in', 'quiz_answer', `Q${qIndex + 1}: option ${aIndex}`);
 
       // Next question or results
@@ -295,7 +321,25 @@ export function initBot(token) {
     // ---- Book diagnostic ----
     if (data === 'book_diagnostic') {
       logEvent('book_start', chatId, {});
-      // Clear previous booking data for fresh start
+
+      // FIX: Don't clear booking data if user already has partial data
+      const user = getUser(chatId);
+      if (user && user.funnel_stage === 'booking' && user.booking_name) {
+        // User already started booking — resume from where they left off
+        await removeKeyboard(chatId, messageId);
+        if (!user.booking_request) {
+          await bot.sendMessage(chatId, `✍️ *${user.booking_name}*, опишите кратко ваш запрос — с чем хотите поработать?`, {
+            parse_mode: 'Markdown'
+          });
+        } else if (!user.booking_time) {
+          await bot.sendMessage(chatId, '📅 Когда вам удобно? Напишите желаемую дату и время\n\n_Например: «Среда, 18:00» или «Завтра после 15:00»_', {
+            parse_mode: 'Markdown'
+          });
+        }
+        return;
+      }
+
+      // Fresh booking start
       updateUser(chatId, {
         funnel_stage: 'booking',
         booking_name: null,
@@ -304,10 +348,10 @@ export function initBot(token) {
       });
       await removeKeyboard(chatId, messageId);
       await sendTyping(chatId, 500);
-      
-      const user = getUser(chatId);
-      const name = user?.first_name || '';
-      
+
+      const freshUser = getUser(chatId);
+      const name = freshUser?.first_name || '';
+
       await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${name}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
         parse_mode: 'Markdown'
       });
@@ -364,11 +408,11 @@ export function initBot(token) {
     if (data.startsWith('confirm_booking_')) {
       const clientId = parseInt(data.replace('confirm_booking_', ''));
       if (isNaN(clientId)) return;
-      
+
       updateUser(clientId, { booking_status: 'confirmed' });
       await removeKeyboard(chatId, messageId);
       await bot.sendMessage(chatId, `✅ Запись клиента подтверждена! Клиент получит уведомление.`);
-      
+
       // Notify client
       try {
         await bot.sendMessage(clientId, '✅ *Отличная новость!*\n\nВаша запись на диагностическую сессию подтверждена. Ждём вас!\n\nЕсли нужно перенести — напишите в WhatsApp.', {
@@ -379,56 +423,62 @@ export function initBot(token) {
             ]
           }
         });
-      } catch(e) {
-        await bot.sendMessage(chatId, '⚠️ Не удалось уведомить клиента (возможно, заблокировал бота).');
+      } catch (err) {
+        handleBlockedUser(clientId, err);
       }
-      
       logEvent('booking_confirmed', clientId, { confirmed_by: chatId });
       return;
     }
 
-    // ---- Exit survey answers ----
+    // ---- Exit survey response ----
     if (data.startsWith('exit_')) {
-      logEvent('exit_survey', chatId, { reason: data });
-      updateUser(chatId, { exit_reason: data });
+      const reason = data;
+      updateUser(chatId, { exit_reason: reason, warmup_active: 0 });
       await removeKeyboard(chatId, messageId);
+      logEvent('exit_survey_response', chatId, { reason });
 
-      const followups = EXIT_FOLLOWUPS[data];
-      if (followups) {
-        for (const text of followups) {
-          await sendTyping(chatId, 500);
-          await bot.sendMessage(chatId, text, {
-            parse_mode: 'Markdown',
-            reply_markup: data !== 'exit_solved' && data !== 'exit_irrelevant' ? {
-              inline_keyboard: [
-                [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
-                [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
-              ]
-            } : undefined
-          });
-        }
+      const followup = EXIT_FOLLOWUPS[reason];
+      if (followup) {
+        await bot.sendMessage(chatId, followup, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
+              [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+            ]
+          }
+        });
+      } else {
+        await bot.sendMessage(chatId, '🙏 Спасибо за обратную связь! Если передумаете — мы всегда рядом.', {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
+            ]
+          }
+        });
       }
-
-      await bot.sendMessage(chatId, '🙏 Спасибо за ответ! Это поможет нам стать лучше.');
-      logMessage(chatId, 'out', 'exit_followup', data);
       return;
     }
 
-    // ---- Referral link request ----
+    // ---- Referral link ----
     if (data === 'get_referral') {
-      const user = getUser(chatId);
-      if (!user) return;
-      const refCode = chatId.toString();
-      const { getReferralCount } = await import('./database.js');
-      const count = getReferralCount(chatId);
-      const text = REFERRAL_TEXT(refCode).replace('*0 человек*', `*${count} человек*`);
-      await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      const code = `ref_${chatId}`;
+      const link = `https://t.me/altyntherapybot?start=${code}`;
+      await bot.sendMessage(chatId, REFERRAL_TEXT(link), {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📤 Поделиться ссылкой', url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Пройди бесплатный тест и узнай свой бессознательный сценарий!')}` }]
+          ]
+        }
+      });
+      logEvent('referral_link_generated', chatId, { code });
       return;
     }
 
-    // ---- WhatsApp link ----
+    // ---- WhatsApp ----
     if (data === 'whatsapp') {
-      await bot.sendMessage(chatId, '📱 Напишите мне в WhatsApp:\nhttps://wa.me/77077198561\n\nИли позвоните: +7 707 719 85 61', {
+      await bot.sendMessage(chatId, '💬 Напишите мне в WhatsApp:\nhttps://wa.me/77077198561\n\nИли позвоните: +7 707 719 85 61', {
         reply_markup: {
           inline_keyboard: [[
             { text: '💬 Открыть WhatsApp', url: 'https://wa.me/77077198561' }
@@ -466,7 +516,7 @@ export function initBot(token) {
 
     // ---- BOOKING FLOW: State machine approach ----
     if (user.funnel_stage === 'booking') {
-      
+
       // Step 1: Waiting for name
       if (!user.booking_name) {
         const nameInput = msg.text.trim();
@@ -502,13 +552,10 @@ export function initBot(token) {
           booking_status: 'booked',
           funnel_stage: 'booked'
         });
-
         const updatedUser = getUser(chatId);
         const name = updatedUser.booking_name || updatedUser.first_name || 'друг';
-
         logMessage(chatId, 'in', 'booking_time', msg.text);
         logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
-
         await sendTyping(chatId, 1000);
         await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(name), {
           parse_mode: 'Markdown',
@@ -551,68 +598,61 @@ export function initBot(token) {
         return;
       }
     }
-
     // If not in booking flow — ignore non-command messages
   });
 
   // ============================================================
   // COMMANDS
   // ============================================================
-  bot.onText(/\/help/, (msg) => {
-    bot.sendMessage(msg.chat.id, `🔮 *Алтын | Гипнотерапевт*\n\nКоманды:\n/start — Начать заново\n/quiz — Пройти тест\n/book — Записаться на диагностику\n/about — О гипнотерапии\n/contact — Контакты\n/referral — Реферальная ссылка`, { parse_mode: 'Markdown' });
+  bot.onText(/\/help/, async (msg) => {
+    await bot.sendMessage(msg.chat.id, '🔮 *Алтын | Гипнотерапевт*\n\n' +
+      '📋 Доступные команды:\n' +
+      '/start — Начать сначала\n' +
+      '/quiz — Пройти тест\n' +
+      '/book — Записаться на диагностику\n' +
+      '/referral — Пригласить друга\n' +
+      '/help — Помощь\n\n' +
+      '💬 WhatsApp: +7 707 719 85 61', {
+      parse_mode: 'Markdown'
+    });
   });
 
-  bot.onText(/\/quiz/, (msg) => {
-    updateUser(msg.chat.id, { quiz_answers: JSON.stringify([]), scenario: null, funnel_stage: 'quiz' });
-    sendQuizQuestion(msg.chat.id, 0);
+  bot.onText(/\/quiz/, async (msg) => {
+    const chatId = msg.chat.id;
+    updateUser(chatId, { funnel_stage: 'quiz', quiz_answers: JSON.stringify([]) });
+    await sendQuizQuestion(chatId, 0);
   });
 
-  bot.onText(/\/book/, (msg) => {
-    updateUser(msg.chat.id, {
+  bot.onText(/\/book/, async (msg) => {
+    const chatId = msg.chat.id;
+    updateUser(chatId, {
       funnel_stage: 'booking',
       booking_name: null,
       booking_request: null,
       booking_time: null
     });
-    bot.sendMessage(msg.chat.id, '📝 *Запись на бесплатную диагностику*\n\nКак вас зовут? (Имя и фамилия)', {
+    const user = getUser(chatId);
+    const name = user?.first_name || '';
+    await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${name}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
       parse_mode: 'Markdown'
     });
   });
 
   bot.onText(/\/referral/, async (msg) => {
     const chatId = msg.chat.id;
-    const { getReferralCount } = await import('./database.js');
-    const count = getReferralCount(chatId);
-    const text = REFERRAL_TEXT(chatId.toString()).replace('*0 человек*', `*${count} человек*`);
-    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
-  });
-
-  bot.onText(/\/about/, (msg) => {
-    bot.sendMessage(msg.chat.id, `🧠 *Что такое гипнотерапия?*\n\nТерапевтический гипноз — это работа с бессознательным в состоянии глубокого расслабления.\n\n◇ Вы в сознании и всё контролируете\n◇ Это НЕ то, что показывают в кино\n◇ 8 сессий вместо лет обычной терапии\n◇ Работает с корнем проблемы, а не симптомами\n\n*Запросы:*\n• Повторяющиеся сценарии в отношениях\n• Финансовый потолок\n• Фоновая тревога\n• Синдром самозванца\n• Прокрастинация\n\n🌐 Подробнее: altyn-therapy.uz`, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '🔮 Пройти тест', callback_data: 'quiz_start' },
-          { text: '📝 Записаться', callback_data: 'book_diagnostic' }
-        ]]
-      }
-    });
-  });
-
-  bot.onText(/\/contact/, (msg) => {
-    bot.sendMessage(msg.chat.id, `📞 *Контакты Алтын*\n\n💬 WhatsApp: +7 707 719 85 61\n📸 Instagram: @altyn.therapy\n🌐 Сайт: altyn-therapy.uz`, {
+    const code = `ref_${chatId}`;
+    const link = `https://t.me/altyntherapybot?start=${code}`;
+    await bot.sendMessage(chatId, REFERRAL_TEXT(link), {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
-          [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }],
-          [{ text: '🌐 Сайт', url: 'https://altyn-therapy.uz' }]
+          [{ text: '📤 Поделиться', url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Пройди бесплатный тест!')}` }]
         ]
       }
     });
   });
 
-  // Handle polling errors gracefully
+  // Handle polling errors gracefully (only in polling mode)
   bot.on('polling_error', (err) => {
     if (err.code === 'ETELEGRAM' && err.response?.statusCode === 409) {
       console.error('⚠️ CONFLICT: Another bot instance is running with the same token!');
@@ -624,7 +664,7 @@ export function initBot(token) {
     }
   });
 
-  console.log('🤖 Altyn Therapy Bot v2.4.0 started');
+  console.log('🤖 Altyn Therapy Bot v2.5.0 started');
   return bot;
 }
 
@@ -639,32 +679,34 @@ async function sendQuizQuestion(chatId, index) {
     callback_data: `quiz_${index}_${i}`
   }]);
 
-  await sendTyping(chatId, 400);
-  await bot.sendMessage(chatId, `${q.text}\n\n_Прогресс: ${progress}_`, {
+  await bot.sendMessage(chatId, `${progress}\n\n*Вопрос ${index + 1}*\n\n${q.text}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: keyboard }
   });
 }
 
 // ============================================================
-// QUIZ RESULT SENDER
+// QUIZ RESULT CALCULATOR
 // ============================================================
 async function sendQuizResult(chatId, answers) {
-  // Calculate scores
   const scores = { savior: 0, fear: 0, control: 0, freeze: 0 };
-  for (const answer of answers) {
-    const q = QUIZ_QUESTIONS[answer.question];
-    if (!q) continue;
-    const opt = q.options[answer.answer];
-    if (!opt || !opt.scores) continue;
-    for (const [key, val] of Object.entries(opt.scores)) {
+
+  for (const a of answers) {
+    const q = QUIZ_QUESTIONS[a.question];
+    if (!q || !q.options[a.answer]) continue;
+    const weights = q.options[a.answer].scores;
+    for (const [key, val] of Object.entries(weights)) {
       if (scores[key] !== undefined) scores[key] += val;
     }
   }
 
-  // Determine dominant scenario
   const scenario = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
   const result = SCENARIO_RESULTS[scenario];
+
+  if (!result) {
+    await bot.sendMessage(chatId, '⚠️ Произошла ошибка при расчёте результата. Попробуйте /start');
+    return;
+  }
 
   updateUser(chatId, {
     scenario,
@@ -673,7 +715,6 @@ async function sendQuizResult(chatId, answers) {
     warmup_active: 1,
     warmup_day: 0
   });
-
   logEvent('quiz_completed', chatId, { scenario, scores });
   logMessage(chatId, 'out', 'quiz_result', scenario);
 
@@ -694,29 +735,25 @@ async function sendQuizResult(chatId, answers) {
     await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
   }
 
-  await new Promise(r => setTimeout(r, 1500));
-
-  // Send CTA
-  await bot.sendMessage(chatId, result.cta, {
+  // Send CTA after result
+  await new Promise(r => setTimeout(r, 2000));
+  await bot.sendMessage(chatId, `🔑 *Что дальше?*\n\nТеперь, когда вы знаете свой сценарий, вы можете:\n\n1️⃣ Записаться на *бесплатную диагностику* — я помогу разобраться глубже\n2️⃣ Получать полезные материалы по вашему сценарию\n\n_Диагностика длится 30 минут и проходит онлайн_`, {
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
         [{ text: '📝 Записаться на бесплатную диагностику', callback_data: 'book_diagnostic' }],
-        [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+        [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
+        [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
       ]
     }
   });
 
   // Notify admin about quiz completion
   const user = getUser(chatId);
-  const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || 'Аноним';
   const uname = user?.username ? `@${user.username}` : 'нет username';
   notifyAdmin(
-    `🎯 *Квиз пройден!*\n\n👤 ${name} (${uname})\n🆔 \`${chatId}\`\n🎭 Сценарий: *${result.title}*\n📊 Баллы: ${JSON.stringify(scores)}`
+    `📊 *Квиз завершён!*\n\n👤 ${user?.first_name || 'Аноним'} (${uname})\n🎭 Сценарий: *${result.title || scenario}*\n🆔 \`${chatId}\``
   );
-
-  // Start scenario-specific warmup
-  updateUser(chatId, { warmup_active: 1, warmup_day: 0 });
 }
 
 // ============================================================
@@ -726,6 +763,7 @@ export async function sendWarmupMessages() {
   if (!bot) return;
   const { getAllUsers } = await import('./database.js');
   const users = getAllUsers({});
+
   for (const user of users) {
     // FIX: Skip users who are already booked, confirmed or completed
     if (!user.warmup_active) continue;
@@ -734,8 +772,10 @@ export async function sendWarmupMessages() {
       continue;
     }
     if (!user.scenario && user.funnel_stage !== 'quiz_completed') continue;
+
     const nextDay = (user.warmup_day || 0) + 1;
     const scenario = user.scenario;
+
     // Get scenario-specific warmup or fallback to generic
     let msgToSend = null;
     if (scenario && SCENARIO_WARMUPS[scenario]) {
@@ -756,6 +796,7 @@ export async function sendWarmupMessages() {
       }
       continue;
     }
+
     try {
       const keyboard = nextDay >= 5 ? {
         inline_keyboard: [
@@ -763,10 +804,12 @@ export async function sendWarmupMessages() {
           [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
         ]
       } : undefined;
+
       await bot.sendMessage(user.telegram_id, msgToSend.text, {
         parse_mode: 'Markdown',
         reply_markup: keyboard
       });
+
       // Send social proof on day 3 and day 6
       if ((nextDay === 3 || nextDay === 6) && scenario && TESTIMONIALS[scenario]) {
         const testimonials = TESTIMONIALS[scenario];
@@ -774,6 +817,7 @@ export async function sendWarmupMessages() {
         await new Promise(r => setTimeout(r, 2000));
         await bot.sendMessage(user.telegram_id, testimonials[idx], { parse_mode: 'Markdown' });
       }
+
       updateUser(user.telegram_id, { warmup_day: nextDay });
       logMessage(user.telegram_id, 'out', 'warmup', `Day ${nextDay} (${scenario || 'generic'})`);
       logEvent('warmup_sent', user.telegram_id, { day: nextDay, scenario });
@@ -791,15 +835,16 @@ export async function sendWarmupMessages() {
 export async function sendReminders() {
   if (!bot) return;
   const db = (await import('./database.js')).default;
-  // 1. Quiz reminders: users who started quiz but didn't finish (2h+ ago)
+
+  // 1. Quiz reminders: users who started quiz 2h+ ago but didn't finish
   const quizStuck = db.prepare(`
     SELECT * FROM users 
     WHERE funnel_stage = 'quiz' 
-    AND quiz_answers IS NOT NULL 
     AND updated_at <= datetime('now', '-2 hours')
     AND updated_at >= datetime('now', '-24 hours')
     AND warmup_active = 1
   `).all();
+
   for (const user of quizStuck) {
     try {
       let answers = [];
@@ -821,6 +866,7 @@ export async function sendReminders() {
     }
     await new Promise(r => setTimeout(r, 100));
   }
+
   // 2. Quiz reminders: users who started quiz 24h+ ago
   const quizAbandoned = db.prepare(`
     SELECT * FROM users 
@@ -829,6 +875,7 @@ export async function sendReminders() {
     AND updated_at >= datetime('now', '-48 hours')
     AND warmup_active = 1
   `).all();
+
   for (const user of quizAbandoned) {
     try {
       await bot.sendMessage(user.telegram_id, QUIZ_REMINDER_24H, {
@@ -845,6 +892,7 @@ export async function sendReminders() {
     }
     await new Promise(r => setTimeout(r, 100));
   }
+
   // 3. Booking reminders: users who started booking but didn't finish (30 min)
   const bookingStuck = db.prepare(`
     SELECT * FROM users 
@@ -853,6 +901,7 @@ export async function sendReminders() {
     AND updated_at <= datetime('now', '-30 minutes')
     AND updated_at >= datetime('now', '-2 hours')
   `).all();
+
   for (const user of bookingStuck) {
     try {
       await bot.sendMessage(user.telegram_id, BOOKING_REMINDER_30MIN(user.booking_name || user.first_name), {
@@ -879,6 +928,7 @@ export async function sendReminders() {
     AND updated_at <= datetime('now', '-24 hours')
     AND updated_at >= datetime('now', '-48 hours')
   `).all();
+
   for (const user of bookingAbandoned) {
     try {
       await bot.sendMessage(user.telegram_id, BOOKING_REMINDER_24H, {
@@ -926,10 +976,13 @@ export async function sendBroadcast(broadcastId) {
   if (!bot) return { sent: 0, failed: 0 };
   const { getBroadcastUsers, updateBroadcast } = await import('./database.js');
   const db = (await import('./database.js')).default;
+
   const broadcast = db.prepare('SELECT * FROM broadcasts WHERE id = ?').get(broadcastId);
   if (!broadcast) return { sent: 0, failed: 0 };
+
   const users = getBroadcastUsers(broadcast.segment);
   let sent = 0, failed = 0;
+
   // Parse buttons if present
   let buttons = null;
   try {
@@ -937,6 +990,7 @@ export async function sendBroadcast(broadcastId) {
       buttons = JSON.parse(broadcast.buttons);
     }
   } catch(e) {}
+
   for (const u of users) {
     try {
       const keyboard = buttons && buttons.length > 0 ? {
@@ -949,6 +1003,7 @@ export async function sendBroadcast(broadcastId) {
           [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
         ]
       };
+
       if (broadcast.image_url) {
         await bot.sendPhoto(u.telegram_id, broadcast.image_url, {
           caption: broadcast.content,
@@ -968,6 +1023,7 @@ export async function sendBroadcast(broadcastId) {
     }
     await new Promise(r => setTimeout(r, 50));
   }
+
   updateBroadcast(broadcastId, {
     status: 'sent',
     sent_count: sent,

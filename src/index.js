@@ -18,10 +18,6 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 const assetsDir = path.join(__dirname, '..', 'assets');
 if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
 
-// ==================== TELEGRAM BOT ====================
-const BOT_TOKEN = process.env.BOT_TOKEN || '8698863140:AAEZE-iDU9T9RkUwmtl00SvVzY0srM1woqw';
-const bot = initBot(BOT_TOKEN);
-
 // ==================== EXPRESS SERVER ====================
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -35,26 +31,40 @@ const allowedOrigins = [
 ];
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, etc.)
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(null, true); // Still allow for now — can restrict later
+      // Log unknown origin but allow (can restrict later)
+      console.log(`⚠️ CORS request from unknown origin: ${origin}`);
+      callback(null, true);
     }
   },
   credentials: true
 }));
+
+// IMPORTANT: raw JSON body parser MUST be before webhook route
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// ==================== TELEGRAM BOT ====================
+// MUST init bot AFTER express app is created and json parser is set up
+// so webhook route can receive Telegram updates
+const BOT_TOKEN = process.env.BOT_TOKEN || '8698863140:AAEZE-iDU9T9RkUwmtl00SvVzY0srM1woqw';
+const bot = initBot(BOT_TOKEN, app);
 
 // API routes
 app.use('/api', adminRouter);
 
 // Health check
 app.get('/health', (req, res) => {
+  const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : process.env.WEBHOOK_URL || null;
+
   res.json({
     status: 'ok',
-    version: '2.4.0',
+    version: '2.5.0',
+    mode: WEBHOOK_URL ? 'webhook' : 'polling',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     notify_group: process.env.NOTIFY_GROUP_ID ? 'configured' : 'not set',
@@ -62,7 +72,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Serve admin panel
+// Serve admin panel (catch-all — must be LAST route)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
@@ -79,7 +89,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Admin panel v2.4.0 running on port ${PORT}`);
+  console.log(`🌐 Admin panel v2.5.0 running on port ${PORT}`);
 }).on('error', (err) => {
   console.error('Server error:', err.message);
   if (err.code === 'EADDRINUSE') {
@@ -104,8 +114,8 @@ cron.schedule('0 */2 * * *', () => {
   sendReminders().catch(err => console.error('Reminders cron error:', err));
 });
 
-// Check for scheduled broadcasts every minute
-cron.schedule('* * * * *', async () => {
+// Check for scheduled broadcasts every 5 minutes (was every 1 min — too frequent)
+cron.schedule('*/5 * * * *', async () => {
   try {
     const { getScheduledBroadcasts, updateBroadcast } = await import('./database.js');
     const scheduled = getScheduledBroadcasts();
@@ -138,8 +148,9 @@ cron.schedule('0 */6 * * *', async () => {
   }
 });
 
-console.log('✅ Altyn Therapy System v2.4.0 started');
+const mode = process.env.RAILWAY_PUBLIC_DOMAIN ? 'WEBHOOK' : 'POLLING';
+console.log(`✅ Altyn Therapy System v2.5.0 started (${mode} mode)`);
 console.log(`🤖 Bot: @altyntherapybot`);
 console.log(`🌐 Admin: http://localhost:${PORT}`);
 console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);
-console.log('📋 Cron jobs: warmup (10:00 Almaty), reminders (every 2h), scheduled broadcasts (every 1m)');
+console.log('📋 Cron jobs: warmup (10:00 Almaty), reminders (every 2h), broadcasts (every 5m)');
