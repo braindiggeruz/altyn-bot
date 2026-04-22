@@ -15,7 +15,29 @@ import {
 } from './content.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OWNER_ID = process.env.OWNER_TELEGRAM_ID;
+
+// ============================================================
+// NOTIFICATION TARGETS
+// OWNER_TELEGRAM_ID — личный ID владельца (необязательно)
+// NOTIFY_GROUP_ID   — ID группы "Алтын-заявки" (приоритет)
+// ============================================================
+const OWNER_ID = process.env.OWNER_TELEGRAM_ID || null;
+const GROUP_ID = process.env.NOTIFY_GROUP_ID || null;
+
+// Отправить уведомление в группу И/ИЛИ владельцу
+async function notifyAdmin(text, options = {}) {
+  if (!bot) return;
+  const targets = [];
+  if (GROUP_ID) targets.push(GROUP_ID);
+  if (OWNER_ID && OWNER_ID !== GROUP_ID) targets.push(OWNER_ID);
+  for (const target of targets) {
+    try {
+      await bot.sendMessage(target, text, { parse_mode: 'Markdown', ...options });
+    } catch (e) {
+      console.error(`Notify error for ${target}:`, e.message);
+    }
+  }
+}
 
 let bot;
 
@@ -50,6 +72,30 @@ async function removeKeyboard(chatId, messageId) {
   } catch(e) {
     // Message might be too old or already edited
   }
+}
+
+// ============================================================
+// HELPER: Phone number validation
+// ============================================================
+function isValidPhone(text) {
+  // Accepts: +7XXXXXXXXXX, 8XXXXXXXXXX, +998XXXXXXXXX, +7 777 123 45 67, etc.
+  const cleaned = text.replace(/[\s\-\(\)]/g, '');
+  return /^(\+?[78]\d{10}|\+?998\d{9}|\+?7\d{10})$/.test(cleaned);
+}
+
+// ============================================================
+// HELPER: Safely disable warmup for blocked users
+// ============================================================
+function handleBlockedUser(telegramId, err) {
+  if (
+    (err.response && err.response.statusCode === 403) ||
+    (err.code === 'ETELEGRAM' && err.message && err.message.includes('403'))
+  ) {
+    updateUser(telegramId, { warmup_active: 0 });
+    console.log(`🚫 User ${telegramId} blocked bot — warmup disabled`);
+    return true;
+  }
+  return false;
 }
 
 export function initBot(token) {
@@ -158,12 +204,12 @@ export function initBot(token) {
 
     logMessage(chatId, 'out', 'welcome', 'Welcome message sent');
 
-    // Notify owner
-    if (OWNER_ID) {
-      const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
-      const uname = msg.from.username ? `@${msg.from.username}` : 'нет username';
-      bot.sendMessage(OWNER_ID, `🆕 *Новый пользователь!*\n\n👤 ${name}\n📱 ${uname}\n📊 Источник: ${source}${referrerId ? `\n🔗 Реферал от: ${referrerId}` : ''}`, { parse_mode: 'Markdown' }).catch(() => {});
-    }
+    // Notify admin group/owner about new user
+    const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
+    const uname = msg.from.username ? `@${msg.from.username}` : 'нет username';
+    notifyAdmin(
+      `🆕 *Новый пользователь!*\n\n👤 ${name}\n📱 ${uname}\n🆔 \`${chatId}\`\n📊 Источник: ${source}${referrerId ? `\n🔗 Реферал от: ${referrerId}` : ''}`
+    );
   });
 
   // ============================================================
@@ -298,14 +344,14 @@ export function initBot(token) {
       return;
     }
 
-    // ---- Confirm booking (owner action) ----
+    // ---- Confirm booking (owner/admin action) ----
     if (data.startsWith('confirm_booking_')) {
       const clientId = parseInt(data.replace('confirm_booking_', ''));
       if (isNaN(clientId)) return;
       
       updateUser(clientId, { booking_status: 'confirmed' });
       await removeKeyboard(chatId, messageId);
-      await bot.sendMessage(chatId, `✅ Запись клиента ${clientId} подтверждена!`);
+      await bot.sendMessage(chatId, `✅ Запись клиента подтверждена! Клиент получит уведомление.`);
       
       // Notify client
       try {
@@ -395,6 +441,8 @@ export function initBot(token) {
   bot.on('message', async (msg) => {
     if (!msg.text) return;
     if (msg.text.startsWith('/')) return;
+    // Ignore messages from groups (except commands)
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') return;
 
     const chatId = msg.chat.id;
     const user = getUser(chatId);
@@ -405,10 +453,16 @@ export function initBot(token) {
       
       // Step 1: Waiting for name
       if (!user.booking_name) {
-        updateUser(chatId, { booking_name: msg.text.trim() });
+        const nameInput = msg.text.trim();
+        // Basic name validation: at least 2 chars, no digits
+        if (nameInput.length < 2) {
+          await bot.sendMessage(chatId, '⚠️ Пожалуйста, введите ваше имя и фамилию.');
+          return;
+        }
+        updateUser(chatId, { booking_name: nameInput });
         logMessage(chatId, 'in', 'booking_name', msg.text);
         await sendTyping(chatId, 500);
-        await bot.sendMessage(chatId, `✍️ Приятно познакомиться, *${msg.text.trim()}*!\n\nОпишите кратко ваш запрос — с чем хотите поработать?`, {
+        await bot.sendMessage(chatId, `✍️ Приятно познакомиться, *${nameInput}*!\n\nОпишите кратко ваш запрос — с чем хотите поработать?`, {
           parse_mode: 'Markdown'
         });
         return;
@@ -451,33 +505,30 @@ export function initBot(token) {
           }
         });
 
-        // AUTO-HANDOFF: Notify owner with full details
-        if (OWNER_ID) {
-          const scenario = updatedUser.scenario || 'не определён';
-          const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
-          const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
-          const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
-            `👤 *Имя:* ${updatedUser.booking_name}\n` +
-            `📱 *Telegram:* ${uname}\n` +
-            `🆔 *ID:* \`${chatId}\`\n` +
-            `🎭 *Сценарий:* ${scenarioTitle}\n` +
-            `📝 *Запрос:* ${updatedUser.booking_request}\n` +
-            `📅 *Время:* ${msg.text}\n` +
-            `📊 *Источник:* ${updatedUser.source || 'organic'}\n` +
-            `${updatedUser.utm_campaign ? `📎 *Кампания:* ${updatedUser.utm_campaign}\n` : ''}` +
-            `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
-            `📞 Написать: tg://user?id=${chatId}`;
+        // AUTO-HANDOFF: Notify admin group with full lead details
+        const scenario = updatedUser.scenario || 'не определён';
+        const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
+        const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
+        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
+          `👤 *Имя:* ${updatedUser.booking_name}\n` +
+          `📱 *Telegram:* ${uname}\n` +
+          `🆔 *ID:* \`${chatId}\`\n` +
+          `🎭 *Сценарий:* ${scenarioTitle}\n` +
+          `📝 *Запрос:* ${updatedUser.booking_request}\n` +
+          `📅 *Время:* ${msg.text}\n` +
+          `📊 *Источник:* ${updatedUser.source || 'organic'}\n` +
+          `${updatedUser.utm_campaign ? `📎 *Кампания:* ${updatedUser.utm_campaign}\n` : ''}` +
+          `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
+          `📞 Написать: tg://user?id=${chatId}`;
 
-          bot.sendMessage(OWNER_ID, ownerMsg, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '✅ Подтвердить запись', callback_data: `confirm_booking_${chatId}` }],
-                [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }]
-              ]
-            }
-          }).catch(() => {});
-        }
+        await notifyAdmin(ownerMsg, {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Подтвердить запись', callback_data: `confirm_booking_${chatId}` }],
+              [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }]
+            ]
+          }
+        });
 
         // Stop warmup
         updateUser(chatId, { warmup_active: 0 });
@@ -550,12 +601,14 @@ export function initBot(token) {
     if (err.code === 'ETELEGRAM' && err.response?.statusCode === 409) {
       console.error('⚠️ CONFLICT: Another bot instance is running with the same token!');
       console.error('⚠️ Only ONE instance should be running at a time.');
+    } else if (err.code === 'ETELEGRAM' && err.response?.statusCode === 401) {
+      console.error('❌ INVALID BOT TOKEN! Check BOT_TOKEN environment variable.');
     } else {
       console.error('Polling error:', err.code, err.message);
     }
   });
 
-  console.log('🤖 Altyn Therapy Bot v2.1 started');
+  console.log('🤖 Altyn Therapy Bot v2.2.0 started');
   return bot;
 }
 
@@ -570,117 +623,98 @@ async function sendQuizQuestion(chatId, index) {
     callback_data: `quiz_${index}_${i}`
   }]);
 
-  const text = `${progress}\n\n${q.text}`;
-
-  await bot.sendMessage(chatId, text, {
+  await sendTyping(chatId, 400);
+  await bot.sendMessage(chatId, `${q.text}\n\n_Прогресс: ${progress}_`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: keyboard }
   });
-
-  logMessage(chatId, 'out', 'quiz_question', `Question ${index + 1}`);
 }
 
 // ============================================================
 // QUIZ RESULT SENDER
 // ============================================================
 async function sendQuizResult(chatId, answers) {
+  // Calculate scores
   const scores = { savior: 0, fear: 0, control: 0, freeze: 0 };
-
-  answers.forEach(a => {
-    const q = QUIZ_QUESTIONS[a.question];
-    if (q && q.options[a.answer]) {
-      const optScores = q.options[a.answer].scores;
-      Object.entries(optScores).forEach(([key, val]) => {
-        scores[key] = (scores[key] || 0) + val;
-      });
+  for (const answer of answers) {
+    const q = QUIZ_QUESTIONS[answer.question];
+    if (!q) continue;
+    const opt = q.options[answer.answer];
+    if (!opt || !opt.scores) continue;
+    for (const [key, val] of Object.entries(opt.scores)) {
+      if (scores[key] !== undefined) scores[key] += val;
     }
-  });
+  }
 
+  // Determine dominant scenario
   const scenario = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
   const result = SCENARIO_RESULTS[scenario];
 
   updateUser(chatId, {
     scenario,
-    quiz_score: Math.max(...Object.values(scores)),
-    funnel_stage: 'quiz_completed'
+    quiz_score: JSON.stringify(scores),
+    funnel_stage: 'quiz_completed',
+    warmup_active: 1,
+    warmup_day: 0
   });
 
-  logEvent('quiz_complete', chatId, { scenario, scores });
-
-  // Send "analyzing" message for suspense
-  const analyzingMsg = await bot.sendMessage(chatId, '🔮 *Анализирую ваши ответы...*', { parse_mode: 'Markdown' });
-  await new Promise(r => setTimeout(r, 2000));
-
-  // Delete analyzing message
-  try {
-    await bot.deleteMessage(chatId, analyzingMsg.message_id);
-  } catch(e) {}
+  logEvent('quiz_completed', chatId, { scenario, scores });
+  logMessage(chatId, 'out', 'quiz_result', scenario);
 
   // Send result image
   try {
-    const imgPath = path.resolve(__dirname, '..', 'assets', `result_${result.image}.png`);
+    const imgKey = result.image || scenario;
+    const imgPath = path.resolve(__dirname, '..', 'assets', `result_${imgKey}.png`);
     if (fs.existsSync(imgPath)) {
-      await bot.sendPhoto(chatId, imgPath);
+      await bot.sendPhoto(chatId, imgPath, {
+        caption: result.text,
+        parse_mode: 'Markdown'
+      });
+    } else {
+      await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
     }
   } catch (err) {
     console.error('Error sending result image:', err.message);
+    await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
   }
 
-  // Send result text
-  await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
+  await new Promise(r => setTimeout(r, 1500));
 
-  // Send social proof (testimonial) for this scenario
-  const testimonials = TESTIMONIALS[scenario];
-  if (testimonials && testimonials.length > 0) {
-    const randomTestimonial = testimonials[Math.floor(Math.random() * testimonials.length)];
-    await new Promise(r => setTimeout(r, 1500));
-    await sendTyping(chatId, 800);
-    await bot.sendMessage(chatId, randomTestimonial, { parse_mode: 'Markdown' });
-  }
-
-  // Send CTA with delay
-  await new Promise(r => setTimeout(r, 1000));
+  // Send CTA
   await bot.sendMessage(chatId, result.cta, {
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
-        [{ text: '💬 Написать в WhatsApp', url: 'https://wa.me/77077198561' }],
-        [{ text: '🔄 Пройти тест заново', callback_data: 'restart_quiz' }]
+        [{ text: '📝 Записаться на бесплатную диагностику', callback_data: 'book_diagnostic' }],
+        [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
       ]
     }
   });
 
-  logMessage(chatId, 'out', 'quiz_result', `Scenario: ${scenario}`);
-
-  // Notify owner
-  if (OWNER_ID) {
-    const user = getUser(chatId);
-    const name = [user.first_name, user.last_name].filter(Boolean).join(' ');
-    const uname = user.username ? `@${user.username}` : 'нет username';
-    bot.sendMessage(OWNER_ID, `🎯 *Квиз пройден!*\n\n👤 ${name} (${uname})\n🎭 Сценарий: *${result.title}*\n📊 Баллы: ${JSON.stringify(scores)}`, { parse_mode: 'Markdown' }).catch(() => {});
-  }
+  // Notify admin about quiz completion
+  const user = getUser(chatId);
+  const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || 'Аноним';
+  const uname = user?.username ? `@${user.username}` : 'нет username';
+  notifyAdmin(
+    `🎯 *Квиз пройден!*\n\n👤 ${name} (${uname})\n🆔 \`${chatId}\`\n🎭 Сценарий: *${result.title}*\n📊 Баллы: ${JSON.stringify(scores)}`
+  );
 
   // Start scenario-specific warmup
   updateUser(chatId, { warmup_active: 1, warmup_day: 0 });
 }
 
 // ============================================================
-// SCENARIO-SPECIFIC WARMUP SENDER (called by cron)
+// WARMUP SENDER (called by cron - every day at 10:00 Almaty)
 // ============================================================
 export async function sendWarmupMessages() {
   if (!bot) return;
-
   const { getAllUsers } = await import('./database.js');
   const users = getAllUsers({});
-
   for (const user of users) {
     if (!user.warmup_active || user.booking_status === 'booked') continue;
     if (!user.scenario && user.funnel_stage !== 'quiz_completed') continue;
-
     const nextDay = (user.warmup_day || 0) + 1;
     const scenario = user.scenario;
-
     // Get scenario-specific warmup or fallback to generic
     let msgToSend = null;
     if (scenario && SCENARIO_WARMUPS[scenario]) {
@@ -692,7 +726,6 @@ export async function sendWarmupMessages() {
     if (!msgToSend) {
       msgToSend = FOLLOWUP_MESSAGES.find(m => m.day === nextDay);
     }
-
     if (!msgToSend) {
       if (nextDay > 14) {
         if (!user.exit_reason) {
@@ -702,7 +735,6 @@ export async function sendWarmupMessages() {
       }
       continue;
     }
-
     try {
       const keyboard = nextDay >= 5 ? {
         inline_keyboard: [
@@ -710,12 +742,10 @@ export async function sendWarmupMessages() {
           [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
         ]
       } : undefined;
-
       await bot.sendMessage(user.telegram_id, msgToSend.text, {
         parse_mode: 'Markdown',
         reply_markup: keyboard
       });
-
       // Send social proof on day 3 and day 6
       if ((nextDay === 3 || nextDay === 6) && scenario && TESTIMONIALS[scenario]) {
         const testimonials = TESTIMONIALS[scenario];
@@ -723,17 +753,13 @@ export async function sendWarmupMessages() {
         await new Promise(r => setTimeout(r, 2000));
         await bot.sendMessage(user.telegram_id, testimonials[idx], { parse_mode: 'Markdown' });
       }
-
       updateUser(user.telegram_id, { warmup_day: nextDay });
       logMessage(user.telegram_id, 'out', 'warmup', `Day ${nextDay} (${scenario || 'generic'})`);
       logEvent('warmup_sent', user.telegram_id, { day: nextDay, scenario });
     } catch (err) {
       console.error(`Warmup error for ${user.telegram_id}:`, err.message);
-      if (err.response && err.response.statusCode === 403) {
-        updateUser(user.telegram_id, { warmup_active: 0 });
-      }
+      handleBlockedUser(user.telegram_id, err);
     }
-
     await new Promise(r => setTimeout(r, 100));
   }
 }
@@ -743,9 +769,7 @@ export async function sendWarmupMessages() {
 // ============================================================
 export async function sendReminders() {
   if (!bot) return;
-
   const db = (await import('./database.js')).default;
-
   // 1. Quiz reminders: users who started quiz but didn't finish (2h+ ago)
   const quizStuck = db.prepare(`
     SELECT * FROM users 
@@ -755,14 +779,12 @@ export async function sendReminders() {
     AND updated_at >= datetime('now', '-24 hours')
     AND warmup_active = 1
   `).all();
-
   for (const user of quizStuck) {
     try {
       let answers = [];
       try { answers = JSON.parse(user.quiz_answers || '[]'); } catch(e) {}
       const questionsLeft = QUIZ_QUESTIONS.length - answers.length;
       if (questionsLeft <= 0) continue;
-
       await bot.sendMessage(user.telegram_id, QUIZ_REMINDER_2H(questionsLeft), {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -774,13 +796,10 @@ export async function sendReminders() {
       });
       logEvent('reminder_sent', user.telegram_id, { type: 'quiz_2h' });
     } catch (err) {
-      if (err.response?.statusCode === 403) {
-        updateUser(user.telegram_id, { warmup_active: 0 });
-      }
+      handleBlockedUser(user.telegram_id, err);
     }
     await new Promise(r => setTimeout(r, 100));
   }
-
   // 2. Quiz reminders: users who started quiz 24h+ ago
   const quizAbandoned = db.prepare(`
     SELECT * FROM users 
@@ -789,7 +808,6 @@ export async function sendReminders() {
     AND updated_at >= datetime('now', '-48 hours')
     AND warmup_active = 1
   `).all();
-
   for (const user of quizAbandoned) {
     try {
       await bot.sendMessage(user.telegram_id, QUIZ_REMINDER_24H, {
@@ -802,13 +820,10 @@ export async function sendReminders() {
       });
       logEvent('reminder_sent', user.telegram_id, { type: 'quiz_24h' });
     } catch (err) {
-      if (err.response?.statusCode === 403) {
-        updateUser(user.telegram_id, { warmup_active: 0 });
-      }
+      handleBlockedUser(user.telegram_id, err);
     }
     await new Promise(r => setTimeout(r, 100));
   }
-
   // 3. Booking reminders: users who started booking but didn't finish
   const bookingStuck = db.prepare(`
     SELECT * FROM users 
@@ -817,7 +832,6 @@ export async function sendReminders() {
     AND updated_at <= datetime('now', '-30 minutes')
     AND updated_at >= datetime('now', '-24 hours')
   `).all();
-
   for (const user of bookingStuck) {
     try {
       await bot.sendMessage(user.telegram_id, BOOKING_REMINDER_30MIN(user.booking_name || user.first_name), {
@@ -831,9 +845,7 @@ export async function sendReminders() {
       });
       logEvent('reminder_sent', user.telegram_id, { type: 'booking_30min' });
     } catch (err) {
-      if (err.response?.statusCode === 403) {
-        updateUser(user.telegram_id, { warmup_active: 0 });
-      }
+      handleBlockedUser(user.telegram_id, err);
     }
     await new Promise(r => setTimeout(r, 100));
   }
@@ -844,21 +856,19 @@ export async function sendReminders() {
 // ============================================================
 async function sendExitSurvey(telegramId) {
   if (!bot) return;
-
   try {
     const keyboard = EXIT_SURVEY_OPTIONS.map(opt => [{
       text: opt.text,
       callback_data: opt.callback
     }]);
-
     await bot.sendMessage(telegramId, EXIT_SURVEY_TEXT, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: keyboard }
     });
-
     logEvent('exit_survey_sent', telegramId, {});
   } catch (err) {
     console.error(`Exit survey error for ${telegramId}:`, err.message);
+    handleBlockedUser(telegramId, err);
   }
 }
 
@@ -867,15 +877,12 @@ async function sendExitSurvey(telegramId) {
 // ============================================================
 export async function sendBroadcast(broadcastId) {
   if (!bot) return { sent: 0, failed: 0 };
-
   const { getBroadcastUsers, updateBroadcast } = await import('./database.js');
   const db = (await import('./database.js')).default;
   const broadcast = db.prepare('SELECT * FROM broadcasts WHERE id = ?').get(broadcastId);
   if (!broadcast) return { sent: 0, failed: 0 };
-
   const users = getBroadcastUsers(broadcast.segment);
   let sent = 0, failed = 0;
-
   // Parse buttons if present
   let buttons = null;
   try {
@@ -883,7 +890,6 @@ export async function sendBroadcast(broadcastId) {
       buttons = JSON.parse(broadcast.buttons);
     }
   } catch(e) {}
-
   for (const u of users) {
     try {
       const keyboard = buttons && buttons.length > 0 ? {
@@ -896,7 +902,6 @@ export async function sendBroadcast(broadcastId) {
           [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
         ]
       };
-
       if (broadcast.image_url) {
         await bot.sendPhoto(u.telegram_id, broadcast.image_url, {
           caption: broadcast.content,
@@ -912,17 +917,16 @@ export async function sendBroadcast(broadcastId) {
       sent++;
     } catch (err) {
       failed++;
+      handleBlockedUser(u.telegram_id, err);
     }
     await new Promise(r => setTimeout(r, 50));
   }
-
   updateBroadcast(broadcastId, {
     status: 'sent',
     sent_count: sent,
     failed_count: failed,
     sent_at: new Date().toISOString()
   });
-
   logEvent('broadcast_sent', null, { id: broadcastId, sent, failed });
   return { sent, failed };
 }

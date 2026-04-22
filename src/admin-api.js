@@ -18,6 +18,17 @@ import db from './database.js';
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'altyn-admin-secret-2024';
 
+// Simple in-memory rate limiter for login attempts (max 10 per 15 min per IP)
+const loginAttempts = new Map();
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const recent = (loginAttempts.get(ip) || []).filter(t => now - t < 15 * 60 * 1000);
+  if (recent.length >= 10) return false;
+  recent.push(now);
+  loginAttempts.set(ip, recent);
+  return true;
+}
+
 // Auth middleware
 function authMiddleware(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -35,7 +46,14 @@ function authMiddleware(req, res, next) {
 // ==================== AUTH ====================
 
 router.post('/auth/login', (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
+  }
   const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
   const admin = db.prepare('SELECT * FROM admin_users WHERE username = ?').get(username);
 
   if (!admin) {

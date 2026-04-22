@@ -37,9 +37,11 @@ app.use('/api', adminRouter);
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.1.0',
+    version: '2.2.0',
     uptime: process.uptime(),
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    notify_group: process.env.NOTIFY_GROUP_ID ? 'configured' : 'not set',
+    owner_id: process.env.OWNER_TELEGRAM_ID ? 'configured' : 'not set'
   });
 });
 
@@ -49,7 +51,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Admin panel v2.1 running on port ${PORT}`);
+  console.log(`🌐 Admin panel v2.2.0 running on port ${PORT}`);
 }).on('error', (err) => {
   console.error('Server error:', err.message);
   if (err.code === 'EADDRINUSE') {
@@ -62,8 +64,8 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // ==================== CRON JOBS ====================
 
-// Send warmup messages every day at 10:00 AM (Almaty time ~ 4:00 UTC)
-cron.schedule('0 4 * * *', () => {
+// Send warmup messages every day at 10:00 AM Almaty time (UTC+5 = 05:00 UTC)
+cron.schedule('0 5 * * *', () => {
   console.log('⏰ Running warmup messages...');
   sendWarmupMessages().catch(err => console.error('Warmup cron error:', err));
 });
@@ -108,7 +110,8 @@ cron.schedule('0 */6 * * *', async () => {
   }
 });
 
-console.log('✅ Altyn Therapy System v2.1 started');
+console.log('✅ Altyn Therapy System v2.2.0 started');
 console.log(`🤖 Bot: @altyntherapybot`);
 console.log(`🌐 Admin: http://localhost:${PORT}`);
-console.log('📋 Cron jobs: warmup (10:00), reminders (every 2h), scheduled broadcasts (every 1m)');
+console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);
+console.log('📋 Cron jobs: warmup (10:00 Almaty), reminders (every 2h), scheduled broadcasts (every 1m)');
