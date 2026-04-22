@@ -11,10 +11,10 @@ import {
   getTemplates, createTemplate, deleteTemplate,
   getUtmLinks, createUtmLink, deleteUtmLink,
   getUserTasks, createUserTask, updateUserTask,
-  getCohortData, getUsersForExport
+  getCohortData, getUsersForExport,
+  pool
 } from './database.js';
 import { sendBroadcast } from './bot.js';
-import db from './database.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'altyn_jwt_' + Math.random().toString(36).slice(2) + '_2024_secure';
@@ -49,7 +49,7 @@ function authMiddleware(req, res, next) {
 
 // ==================== AUTH ====================
 
-router.post('/auth/login', (req, res) => {
+router.post('/auth/login', async (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   if (!checkRateLimit(ip)) {
     return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
@@ -58,25 +58,33 @@ router.post('/auth/login', (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });
   }
-  const admin = db.prepare('SELECT * FROM admin_users WHERE username = ?').get(username);
 
-  if (!admin) {
-    const count = db.prepare('SELECT COUNT(*) as count FROM admin_users').get().count;
-    if (count === 0 && username && password) {
-      const hash = bcrypt.hashSync(password, 10);
-      db.prepare('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)').run(username, hash);
-      const token = jwt.sign({ username, role: 'admin' }, JWT_SECRET, { expiresIn: '30d' });
-      return res.json({ token, username, message: 'Admin account created' });
+  try {
+    const adminResult = await pool.query('SELECT * FROM admin_users WHERE username = $1', [username]);
+    const admin = adminResult.rows[0];
+
+    if (!admin) {
+      const countResult = await pool.query('SELECT COUNT(*) as count FROM admin_users');
+      const count = parseInt(countResult.rows[0].count);
+      if (count === 0 && username && password) {
+        const hash = bcrypt.hashSync(password, 10);
+        await pool.query('INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)', [username, hash]);
+        const token = jwt.sign({ username, role: 'admin' }, JWT_SECRET, { expiresIn: '30d' });
+        return res.json({ token, username, message: 'Admin account created' });
+      }
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
 
-  if (!bcrypt.compareSync(password, admin.password_hash)) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
+    if (!bcrypt.compareSync(password, admin.password_hash)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
-  const token = jwt.sign({ username: admin.username, role: admin.role }, JWT_SECRET, { expiresIn: '30d' });
-  res.json({ token, username: admin.username });
+    const token = jwt.sign({ username: admin.username, role: admin.role }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, username: admin.username });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/auth/me', authMiddleware, (req, res) => {
@@ -85,370 +93,544 @@ router.get('/auth/me', authMiddleware, (req, res) => {
 
 // ==================== DASHBOARD ====================
 
-router.get('/dashboard', authMiddleware, (req, res) => {
-  const stats = getStats();
-  res.json(stats);
+router.get('/dashboard', authMiddleware, async (req, res) => {
+  try {
+    const stats = await getStats();
+    res.json(stats);
+  } catch (err) {
+    console.error('Dashboard error:', err.message);
+    res.status(500).json({ error: 'Failed to load dashboard' });
+  }
 });
 
-router.get('/dashboard/funnel', authMiddleware, (req, res) => {
-  const total = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-  const started = db.prepare("SELECT COUNT(*) as c FROM users WHERE funnel_stage != 'new'").get().c;
-  const quizStarted = db.prepare("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('quiz','quiz_completed','booking','booked','completed')").get().c;
-  const quizCompleted = db.prepare("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('quiz_completed','booking','booked','completed')").get().c;
-  const bookingStarted = db.prepare("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('booking','booked','completed')").get().c;
-  const booked = db.prepare("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('booked','completed')").get().c;
-  const completed = db.prepare("SELECT COUNT(*) as c FROM users WHERE funnel_stage = 'completed'").get().c;
+router.get('/dashboard/funnel', authMiddleware, async (req, res) => {
+  try {
+    const r = async (q) => parseInt((await pool.query(q)).rows[0]?.c || 0);
+    const total = await r('SELECT COUNT(*) as c FROM users');
+    const started = await r("SELECT COUNT(*) as c FROM users WHERE funnel_stage != 'new'");
+    const quizStarted = await r("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('quiz','quiz_completed','booking','booked','completed')");
+    const quizCompleted = await r("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('quiz_completed','booking','booked','completed')");
+    const bookingStarted = await r("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('booking','booked','completed')");
+    const booked = await r("SELECT COUNT(*) as c FROM users WHERE funnel_stage IN ('booked','completed')");
+    const completed = await r("SELECT COUNT(*) as c FROM users WHERE funnel_stage = 'completed'");
 
-  res.json({
-    funnel: [
-      { stage: 'Всего пользователей', count: total, pct: 100 },
-      { stage: 'Начали (/start)', count: started, pct: total ? Math.round(started / total * 100) : 0 },
-      { stage: 'Начали квиз', count: quizStarted, pct: total ? Math.round(quizStarted / total * 100) : 0 },
-      { stage: 'Завершили квиз', count: quizCompleted, pct: total ? Math.round(quizCompleted / total * 100) : 0 },
-      { stage: 'Начали запись', count: bookingStarted, pct: total ? Math.round(bookingStarted / total * 100) : 0 },
-      { stage: 'Записались', count: booked, pct: total ? Math.round(booked / total * 100) : 0 },
-      { stage: 'Завершили', count: completed, pct: total ? Math.round(completed / total * 100) : 0 }
-    ]
-  });
+    res.json({
+      funnel: [
+        { stage: 'Всего пользователей', count: total, pct: 100 },
+        { stage: 'Начали (/start)', count: started, pct: total ? Math.round(started / total * 100) : 0 },
+        { stage: 'Начали квиз', count: quizStarted, pct: total ? Math.round(quizStarted / total * 100) : 0 },
+        { stage: 'Завершили квиз', count: quizCompleted, pct: total ? Math.round(quizCompleted / total * 100) : 0 },
+        { stage: 'Начали запись', count: bookingStarted, pct: total ? Math.round(bookingStarted / total * 100) : 0 },
+        { stage: 'Записались', count: booked, pct: total ? Math.round(booked / total * 100) : 0 },
+        { stage: 'Завершили', count: completed, pct: total ? Math.round(completed / total * 100) : 0 }
+      ]
+    });
+  } catch (err) {
+    console.error('Funnel error:', err.message);
+    res.status(500).json({ error: 'Failed to load funnel' });
+  }
 });
 
-router.get('/dashboard/activity', authMiddleware, (req, res) => {
-  // FIX: Sanitize days param to prevent SQL injection
-  const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
-  const activity = db.prepare(`
-    SELECT date(created_at) as date,
-           COUNT(DISTINCT user_telegram_id) as users,
-           COUNT(*) as messages
-    FROM messages_log
-    WHERE created_at >= datetime('now', ? || ' days')
-    GROUP BY date(created_at)
-    ORDER BY date
-  `).all('-' + days);
-  res.json(activity);
+router.get('/dashboard/activity', authMiddleware, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
+    const result = await pool.query(`
+      SELECT created_at::date as date,
+             COUNT(DISTINCT user_telegram_id) as users,
+             COUNT(*) as messages
+      FROM messages_log
+      WHERE created_at >= NOW() - ($1 || ' days')::INTERVAL
+      GROUP BY created_at::date
+      ORDER BY date
+    `, [days.toString()]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Activity error:', err.message);
+    res.status(500).json({ error: 'Failed to load activity' });
+  }
 });
 
-router.get('/dashboard/heatmap', authMiddleware, (req, res) => {
-  const heatmap = db.prepare(`
-    SELECT CAST(strftime('%H', created_at) AS INTEGER) as hour,
-           CAST(strftime('%w', created_at) AS INTEGER) as weekday,
-           COUNT(*) as count
-    FROM analytics_events
-    WHERE created_at >= datetime('now', '-30 days')
-    GROUP BY hour, weekday
-  `).all();
-  res.json(heatmap);
+router.get('/dashboard/heatmap', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT EXTRACT(HOUR FROM created_at)::INTEGER as hour,
+             EXTRACT(DOW FROM created_at)::INTEGER as weekday,
+             COUNT(*) as count
+      FROM analytics_events
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY hour, weekday
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Heatmap error:', err.message);
+    res.status(500).json({ error: 'Failed to load heatmap' });
+  }
 });
 
 // ==================== USERS ====================
 
-router.get('/users', authMiddleware, (req, res) => {
-  const users = getAllUsers(req.query);
-  const total = getUserCount(req.query);
-  res.json({ users, total });
-});
-
-router.get('/users/:telegramId', authMiddleware, (req, res) => {
-  const user = getUser(parseInt(req.params.telegramId));
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const messages = db.prepare(
-    'SELECT * FROM messages_log WHERE user_telegram_id = ? ORDER BY created_at DESC LIMIT 100'
-  ).all(user.telegram_id);
-
-  const tasks = getUserTasks(user.telegram_id);
-  const referralCount = getReferralCount(user.telegram_id);
-
-  res.json({ ...user, messages, tasks, referralCount });
-});
-
-router.put('/users/:telegramId', authMiddleware, (req, res) => {
-  const telegramId = parseInt(req.params.telegramId);
-  const allowed = ['booking_status', 'funnel_stage', 'notes', 'warmup_active', 'tags', 'phone'];
-  const fields = {};
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) fields[key] = req.body[key];
+router.get('/users', authMiddleware, async (req, res) => {
+  try {
+    const users = await getAllUsers(req.query);
+    const total = await getUserCount(req.query);
+    res.json({ users, total });
+  } catch (err) {
+    console.error('Users list error:', err.message);
+    res.status(500).json({ error: 'Failed to load users' });
   }
-  updateUser(telegramId, fields);
-  logEvent('admin_user_update', telegramId, { fields: Object.keys(fields) });
-  res.json({ success: true });
+});
+
+router.get('/users/:telegramId', authMiddleware, async (req, res) => {
+  try {
+    const user = await getUser(parseInt(req.params.telegramId));
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const messagesResult = await pool.query(
+      'SELECT * FROM messages_log WHERE user_telegram_id = $1 ORDER BY created_at DESC LIMIT 100',
+      [user.telegram_id]
+    );
+
+    const tasks = await getUserTasks(user.telegram_id);
+    const referralCount = await getReferralCount(user.telegram_id);
+
+    res.json({ ...user, messages: messagesResult.rows, tasks, referralCount });
+  } catch (err) {
+    console.error('User detail error:', err.message);
+    res.status(500).json({ error: 'Failed to load user' });
+  }
+});
+
+router.put('/users/:telegramId', authMiddleware, async (req, res) => {
+  try {
+    const telegramId = parseInt(req.params.telegramId);
+    const allowed = ['booking_status', 'funnel_stage', 'notes', 'warmup_active', 'tags', 'phone'];
+    const fields = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) fields[key] = req.body[key];
+    }
+    await updateUser(telegramId, fields);
+    await logEvent('admin_user_update', telegramId, { fields: Object.keys(fields) });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('User update error:', err.message);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
 });
 
 // User tags
-router.post('/users/:telegramId/tags', authMiddleware, (req, res) => {
-  const telegramId = parseInt(req.params.telegramId);
-  const user = getUser(telegramId);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+router.post('/users/:telegramId/tags', authMiddleware, async (req, res) => {
+  try {
+    const telegramId = parseInt(req.params.telegramId);
+    const user = await getUser(telegramId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-  let tags = [];
-  try { tags = JSON.parse(user.tags || '[]'); } catch(e) {}
-  const newTag = req.body.tag;
-  if (newTag && !tags.includes(newTag)) {
-    tags.push(newTag);
-    updateUser(telegramId, { tags: JSON.stringify(tags) });
+    let tags = [];
+    try { tags = JSON.parse(user.tags || '[]'); } catch(e) {}
+    const newTag = req.body.tag;
+    if (newTag && !tags.includes(newTag)) {
+      tags.push(newTag);
+      await updateUser(telegramId, { tags: JSON.stringify(tags) });
+    }
+    res.json({ tags });
+  } catch (err) {
+    console.error('Tags error:', err.message);
+    res.status(500).json({ error: 'Failed to update tags' });
   }
-  res.json({ tags });
 });
 
-router.delete('/users/:telegramId/tags/:tag', authMiddleware, (req, res) => {
-  const telegramId = parseInt(req.params.telegramId);
-  const user = getUser(telegramId);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+router.delete('/users/:telegramId/tags/:tag', authMiddleware, async (req, res) => {
+  try {
+    const telegramId = parseInt(req.params.telegramId);
+    const user = await getUser(telegramId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-  let tags = [];
-  try { tags = JSON.parse(user.tags || '[]'); } catch(e) {}
-  tags = tags.filter(t => t !== req.params.tag);
-  updateUser(telegramId, { tags: JSON.stringify(tags) });
-  res.json({ tags });
+    let tags = [];
+    try { tags = JSON.parse(user.tags || '[]'); } catch(e) {}
+    tags = tags.filter(t => t !== req.params.tag);
+    await updateUser(telegramId, { tags: JSON.stringify(tags) });
+    res.json({ tags });
+  } catch (err) {
+    console.error('Tags delete error:', err.message);
+    res.status(500).json({ error: 'Failed to delete tag' });
+  }
 });
 
 // User tasks (CRM)
-router.post('/users/:telegramId/tasks', authMiddleware, (req, res) => {
-  const id = createUserTask({
-    user_telegram_id: parseInt(req.params.telegramId),
-    ...req.body
-  });
-  res.json({ id });
+router.post('/users/:telegramId/tasks', authMiddleware, async (req, res) => {
+  try {
+    const id = await createUserTask({
+      user_telegram_id: parseInt(req.params.telegramId),
+      ...req.body
+    });
+    res.json({ id });
+  } catch (err) {
+    console.error('Task create error:', err.message);
+    res.status(500).json({ error: 'Failed to create task' });
+  }
 });
 
-router.put('/tasks/:id', authMiddleware, (req, res) => {
-  // FIX: Whitelist allowed fields for task update
-  const allowed = ['title', 'description', 'status', 'due_date', 'priority'];
-  const fields = {};
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) fields[key] = req.body[key];
+router.put('/tasks/:id', authMiddleware, async (req, res) => {
+  try {
+    const allowed = ['title', 'description', 'status', 'due_date', 'priority'];
+    const fields = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) fields[key] = req.body[key];
+    }
+    await updateUserTask(parseInt(req.params.id), fields);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Task update error:', err.message);
+    res.status(500).json({ error: 'Failed to update task' });
   }
-  updateUserTask(parseInt(req.params.id), fields);
-  res.json({ success: true });
 });
 
 // ==================== CSV EXPORT ====================
 
-router.get('/users/export/csv', authMiddleware, (req, res) => {
-  const users = getUsersForExport(req.query);
-  
-  const headers = ['ID', 'Telegram ID', 'Username', 'Имя', 'Фамилия', 'Телефон', 'Сценарий', 'Этап воронки', 'Статус записи', 'Имя для записи', 'Запрос', 'Время записи', 'Источник', 'UTM Source', 'UTM Medium', 'UTM Campaign', 'Причина отказа', 'Теги', 'Заметки', 'Дата регистрации'];
-  
-  const rows = users.map(u => [
-    u.id, u.telegram_id, u.username || '', u.first_name || '', u.last_name || '',
-    u.phone || '', u.scenario || '', u.funnel_stage, u.booking_status,
-    u.booking_name || '', u.booking_request || '', u.booking_time || '',
-    u.source || '', u.utm_source || '', u.utm_medium || '', u.utm_campaign || '',
-    u.exit_reason || '', u.tags || '', u.notes || '', u.created_at
-  ]);
+router.get('/users/export/csv', authMiddleware, async (req, res) => {
+  try {
+    const users = await getUsersForExport(req.query);
 
-  const csvContent = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');
-  
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename=altyn_users_export.csv');
-  res.send('\uFEFF' + csvContent); // BOM for Excel
+    const headers = ['ID', 'Telegram ID', 'Username', 'Имя', 'Фамилия', 'Телефон', 'Сценарий', 'Этап воронки', 'Статус записи', 'Имя для записи', 'Запрос', 'Время записи', 'Источник', 'UTM Source', 'UTM Medium', 'UTM Campaign', 'Причина отказа', 'Теги', 'Заметки', 'Дата регистрации'];
+
+    const rows = users.map(u => [
+      u.id, u.telegram_id, u.username || '', u.first_name || '', u.last_name || '',
+      u.phone || '', u.scenario || '', u.funnel_stage, u.booking_status,
+      u.booking_name || '', u.booking_request || '', u.booking_time || '',
+      u.source || '', u.utm_source || '', u.utm_medium || '', u.utm_campaign || '',
+      u.exit_reason || '', u.tags || '', u.notes || '', u.created_at
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=altyn_users_export.csv');
+    res.send('\uFEFF' + csvContent);
+  } catch (err) {
+    console.error('CSV export error:', err.message);
+    res.status(500).json({ error: 'Failed to export CSV' });
+  }
 });
 
 // ==================== BROADCASTS ====================
 
-router.get('/broadcasts', authMiddleware, (req, res) => {
-  const broadcasts = getBroadcasts();
-  res.json(broadcasts);
+router.get('/broadcasts', authMiddleware, async (req, res) => {
+  try {
+    const broadcasts = await getBroadcasts();
+    res.json(broadcasts);
+  } catch (err) {
+    console.error('Broadcasts error:', err.message);
+    res.status(500).json({ error: 'Failed to load broadcasts' });
+  }
 });
 
-router.post('/broadcasts', authMiddleware, (req, res) => {
-  const id = createBroadcast(req.body);
-  logEvent('broadcast_created', null, { id, title: req.body.title });
-  res.json({ id });
+router.post('/broadcasts', authMiddleware, async (req, res) => {
+  try {
+    const id = await createBroadcast(req.body);
+    await logEvent('broadcast_created', null, { id, title: req.body.title });
+    res.json({ id });
+  } catch (err) {
+    console.error('Broadcast create error:', err.message);
+    res.status(500).json({ error: 'Failed to create broadcast' });
+  }
 });
 
 router.post('/broadcasts/:id/send', authMiddleware, async (req, res) => {
-  const id = parseInt(req.params.id);
-  updateBroadcast(id, { status: 'sending' });
+  try {
+    const id = parseInt(req.params.id);
+    await updateBroadcast(id, { status: 'sending' });
 
-  sendBroadcast(id).then(result => {
-    console.log(`Broadcast ${id} sent:`, result);
-  }).catch(err => {
-    console.error(`Broadcast ${id} error:`, err);
-    updateBroadcast(id, { status: 'error' });
-  });
+    sendBroadcast(id).then(result => {
+      console.log(`Broadcast ${id} sent:`, result);
+    }).catch(err => {
+      console.error(`Broadcast ${id} error:`, err);
+      updateBroadcast(id, { status: 'error' });
+    });
 
-  res.json({ status: 'sending' });
+    res.json({ status: 'sending' });
+  } catch (err) {
+    console.error('Broadcast send error:', err.message);
+    res.status(500).json({ error: 'Failed to send broadcast' });
+  }
 });
 
-router.post('/broadcasts/:id/schedule', authMiddleware, (req, res) => {
-  const id = parseInt(req.params.id);
-  const { scheduled_at } = req.body;
-  updateBroadcast(id, { status: 'scheduled', scheduled_at });
-  logEvent('broadcast_scheduled', null, { id, scheduled_at });
-  res.json({ status: 'scheduled' });
+router.post('/broadcasts/:id/schedule', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { scheduled_at } = req.body;
+    await updateBroadcast(id, { status: 'scheduled', scheduled_at });
+    await logEvent('broadcast_scheduled', null, { id, scheduled_at });
+    res.json({ status: 'scheduled' });
+  } catch (err) {
+    console.error('Broadcast schedule error:', err.message);
+    res.status(500).json({ error: 'Failed to schedule broadcast' });
+  }
 });
 
-router.delete('/broadcasts/:id', authMiddleware, (req, res) => {
-  const id = parseInt(req.params.id);
-  db.prepare('DELETE FROM broadcasts WHERE id = ? AND status = "draft"').run(id);
-  res.json({ success: true });
+router.delete('/broadcasts/:id', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    await pool.query("DELETE FROM broadcasts WHERE id = $1 AND status = 'draft'", [id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Broadcast delete error:', err.message);
+    res.status(500).json({ error: 'Failed to delete broadcast' });
+  }
 });
 
-router.get('/broadcasts/:id/preview', authMiddleware, (req, res) => {
-  const id = parseInt(req.params.id);
-  const broadcast = db.prepare('SELECT * FROM broadcasts WHERE id = ?').get(id);
-  if (!broadcast) return res.status(404).json({ error: 'Not found' });
+router.get('/broadcasts/:id/preview', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const result = await pool.query('SELECT * FROM broadcasts WHERE id = $1', [id]);
+    const broadcast = result.rows[0];
+    if (!broadcast) return res.status(404).json({ error: 'Not found' });
 
-  const users = getBroadcastUsers(broadcast.segment);
-  res.json({ ...broadcast, recipientCount: users.length });
+    const users = await getBroadcastUsers(broadcast.segment);
+    res.json({ ...broadcast, recipientCount: users.length });
+  } catch (err) {
+    console.error('Broadcast preview error:', err.message);
+    res.status(500).json({ error: 'Failed to preview broadcast' });
+  }
 });
 
 // A/B Testing
-router.post('/broadcasts/ab-test', authMiddleware, (req, res) => {
-  const { title, variants, segment } = req.body;
-  // variants = [{ content, image_url }, { content, image_url }]
-  const groupId = Date.now();
-  const ids = [];
+router.post('/broadcasts/ab-test', authMiddleware, async (req, res) => {
+  try {
+    const { title, variants, segment } = req.body;
+    const groupId = Date.now();
+    const ids = [];
 
-  for (let i = 0; i < variants.length; i++) {
-    const id = createBroadcast({
-      title: `${title} (Вариант ${String.fromCharCode(65 + i)})`,
-      content: variants[i].content,
-      image_url: variants[i].image_url,
-      buttons: variants[i].buttons,
-      segment,
-      status: 'draft',
-      ab_variant: String.fromCharCode(65 + i),
-      ab_group_id: groupId
-    });
-    ids.push(id);
+    for (let i = 0; i < variants.length; i++) {
+      const id = await createBroadcast({
+        title: `${title} (Вариант ${String.fromCharCode(65 + i)})`,
+        content: variants[i].content,
+        image_url: variants[i].image_url,
+        buttons: variants[i].buttons,
+        segment,
+        status: 'draft',
+        ab_variant: String.fromCharCode(65 + i),
+        ab_group_id: groupId
+      });
+      ids.push(id);
+    }
+
+    await logEvent('ab_test_created', null, { groupId, variants: ids.length });
+    res.json({ groupId, broadcastIds: ids });
+  } catch (err) {
+    console.error('AB test error:', err.message);
+    res.status(500).json({ error: 'Failed to create A/B test' });
   }
-
-  logEvent('ab_test_created', null, { groupId, variants: ids.length });
-  res.json({ groupId, broadcastIds: ids });
 });
 
-router.get('/broadcasts/ab-results/:groupId', authMiddleware, (req, res) => {
-  const groupId = parseInt(req.params.groupId);
-  const variants = db.prepare('SELECT * FROM broadcasts WHERE ab_group_id = ?').all(groupId);
-  res.json(variants);
+router.get('/broadcasts/ab-results/:groupId', authMiddleware, async (req, res) => {
+  try {
+    const groupId = parseInt(req.params.groupId);
+    const result = await pool.query('SELECT * FROM broadcasts WHERE ab_group_id = $1', [groupId]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('AB results error:', err.message);
+    res.status(500).json({ error: 'Failed to load A/B results' });
+  }
 });
 
 // Segment count
-router.get('/broadcasts/segment-count/:segment', authMiddleware, (req, res) => {
-  const users = getBroadcastUsers(req.params.segment);
-  res.json({ count: users.length });
+router.get('/broadcasts/segment-count/:segment', authMiddleware, async (req, res) => {
+  try {
+    const users = await getBroadcastUsers(req.params.segment);
+    res.json({ count: users.length });
+  } catch (err) {
+    console.error('Segment count error:', err.message);
+    res.status(500).json({ error: 'Failed to count segment' });
+  }
 });
 
 // ==================== TEMPLATES ====================
 
-router.get('/templates', authMiddleware, (req, res) => {
-  const templates = getTemplates();
-  res.json(templates);
+router.get('/templates', authMiddleware, async (req, res) => {
+  try {
+    const templates = await getTemplates();
+    res.json(templates);
+  } catch (err) {
+    console.error('Templates error:', err.message);
+    res.status(500).json({ error: 'Failed to load templates' });
+  }
 });
 
-router.post('/templates', authMiddleware, (req, res) => {
-  const id = createTemplate(req.body);
-  res.json({ id });
+router.post('/templates', authMiddleware, async (req, res) => {
+  try {
+    const id = await createTemplate(req.body);
+    res.json({ id });
+  } catch (err) {
+    console.error('Template create error:', err.message);
+    res.status(500).json({ error: 'Failed to create template' });
+  }
 });
 
-router.delete('/templates/:id', authMiddleware, (req, res) => {
-  deleteTemplate(parseInt(req.params.id));
-  res.json({ success: true });
+router.delete('/templates/:id', authMiddleware, async (req, res) => {
+  try {
+    await deleteTemplate(parseInt(req.params.id));
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Template delete error:', err.message);
+    res.status(500).json({ error: 'Failed to delete template' });
+  }
 });
 
 // ==================== UTM LINKS ====================
 
-router.get('/utm-links', authMiddleware, (req, res) => {
-  const links = getUtmLinks();
-  res.json(links);
+router.get('/utm-links', authMiddleware, async (req, res) => {
+  try {
+    const links = await getUtmLinks();
+    res.json(links);
+  } catch (err) {
+    console.error('UTM links error:', err.message);
+    res.status(500).json({ error: 'Failed to load UTM links' });
+  }
 });
 
-router.post('/utm-links', authMiddleware, (req, res) => {
-  const result = createUtmLink(req.body);
-  res.json(result);
+router.post('/utm-links', authMiddleware, async (req, res) => {
+  try {
+    const result = await createUtmLink(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error('UTM link create error:', err.message);
+    res.status(500).json({ error: 'Failed to create UTM link' });
+  }
 });
 
-router.delete('/utm-links/:id', authMiddleware, (req, res) => {
-  deleteUtmLink(parseInt(req.params.id));
-  res.json({ success: true });
+router.delete('/utm-links/:id', authMiddleware, async (req, res) => {
+  try {
+    await deleteUtmLink(parseInt(req.params.id));
+    res.json({ success: true });
+  } catch (err) {
+    console.error('UTM link delete error:', err.message);
+    res.status(500).json({ error: 'Failed to delete UTM link' });
+  }
 });
 
 // ==================== ANALYTICS ====================
 
-router.get('/analytics/events', authMiddleware, (req, res) => {
-  // FIX: Sanitize days param to prevent SQL injection
-  const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
-  const events = db.prepare(`
-    SELECT event_type, COUNT(*) as count, date(created_at) as date
-    FROM analytics_events
-    WHERE created_at >= datetime('now', ? || ' days')
-    GROUP BY event_type, date(created_at)
-    ORDER BY date
-  `).all('-' + days);
-  res.json(events);
+router.get('/analytics/events', authMiddleware, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
+    const result = await pool.query(`
+      SELECT event_type, COUNT(*) as count, created_at::date as date
+      FROM analytics_events
+      WHERE created_at >= NOW() - ($1 || ' days')::INTERVAL
+      GROUP BY event_type, created_at::date
+      ORDER BY date
+    `, [days.toString()]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Analytics events error:', err.message);
+    res.status(500).json({ error: 'Failed to load analytics' });
+  }
 });
 
-router.get('/analytics/sources', authMiddleware, (req, res) => {
-  const sources = db.prepare(`
-    SELECT source, COUNT(*) as count,
-           SUM(CASE WHEN scenario IS NOT NULL THEN 1 ELSE 0 END) as quiz_completed,
-           SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked
-    FROM users
-    GROUP BY source
-    ORDER BY count DESC
-  `).all();
-  res.json(sources);
+router.get('/analytics/sources', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT source, COUNT(*) as count,
+             SUM(CASE WHEN scenario IS NOT NULL THEN 1 ELSE 0 END) as quiz_completed,
+             SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked
+      FROM users
+      GROUP BY source
+      ORDER BY count DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Analytics sources error:', err.message);
+    res.status(500).json({ error: 'Failed to load sources' });
+  }
 });
 
-router.get('/analytics/scenarios', authMiddleware, (req, res) => {
-  const scenarios = db.prepare(`
-    SELECT scenario, COUNT(*) as count,
-           SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked,
-           AVG(warmup_day) as avg_warmup_day
-    FROM users
-    WHERE scenario IS NOT NULL
-    GROUP BY scenario
-    ORDER BY count DESC
-  `).all();
-  res.json(scenarios);
+router.get('/analytics/scenarios', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT scenario, COUNT(*) as count,
+             SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked,
+             AVG(warmup_day) as avg_warmup_day
+      FROM users
+      WHERE scenario IS NOT NULL
+      GROUP BY scenario
+      ORDER BY count DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Analytics scenarios error:', err.message);
+    res.status(500).json({ error: 'Failed to load scenarios' });
+  }
 });
 
-router.get('/analytics/cohorts', authMiddleware, (req, res) => {
-  const cohorts = getCohortData();
-  res.json(cohorts);
+router.get('/analytics/cohorts', authMiddleware, async (req, res) => {
+  try {
+    const cohorts = await getCohortData();
+    res.json(cohorts);
+  } catch (err) {
+    console.error('Cohorts error:', err.message);
+    res.status(500).json({ error: 'Failed to load cohorts' });
+  }
 });
 
-router.get('/analytics/referrals', authMiddleware, (req, res) => {
-  const stats = getReferralStats();
-  res.json(stats);
+router.get('/analytics/referrals', authMiddleware, async (req, res) => {
+  try {
+    const stats = await getReferralStats();
+    res.json(stats);
+  } catch (err) {
+    console.error('Referrals error:', err.message);
+    res.status(500).json({ error: 'Failed to load referrals' });
+  }
 });
 
-router.get('/analytics/exit-reasons', authMiddleware, (req, res) => {
-  const reasons = db.prepare(`
-    SELECT exit_reason, COUNT(*) as count
-    FROM users
-    WHERE exit_reason IS NOT NULL AND exit_reason != ''
-    GROUP BY exit_reason
-    ORDER BY count DESC
-  `).all();
-  res.json(reasons);
+router.get('/analytics/exit-reasons', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT exit_reason, COUNT(*) as count
+      FROM users
+      WHERE exit_reason IS NOT NULL AND exit_reason != ''
+      GROUP BY exit_reason
+      ORDER BY count DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Exit reasons error:', err.message);
+    res.status(500).json({ error: 'Failed to load exit reasons' });
+  }
 });
 
-router.get('/analytics/warmup-effectiveness', authMiddleware, (req, res) => {
-  const data = db.prepare(`
-    SELECT warmup_day, COUNT(*) as total,
-           SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as converted
-    FROM users
-    WHERE warmup_day > 0
-    GROUP BY warmup_day
-    ORDER BY warmup_day
-  `).all();
-  res.json(data);
+router.get('/analytics/warmup-effectiveness', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT warmup_day, COUNT(*) as total,
+             SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as converted
+      FROM users
+      WHERE warmup_day > 0
+      GROUP BY warmup_day
+      ORDER BY warmup_day
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Warmup effectiveness error:', err.message);
+    res.status(500).json({ error: 'Failed to load warmup data' });
+  }
 });
 
-router.get('/analytics/conversion-by-source', authMiddleware, (req, res) => {
-  const data = db.prepare(`
-    SELECT source, 
-           COUNT(*) as total,
-           SUM(CASE WHEN scenario IS NOT NULL THEN 1 ELSE 0 END) as quiz_done,
-           SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked,
-           ROUND(CAST(SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100, 1) as conversion_rate
-    FROM users
-    GROUP BY source
-    ORDER BY conversion_rate DESC
-  `).all();
-  res.json(data);
+router.get('/analytics/conversion-by-source', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT source,
+             COUNT(*) as total,
+             SUM(CASE WHEN scenario IS NOT NULL THEN 1 ELSE 0 END) as quiz_done,
+             SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked,
+             ROUND(CAST(SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100, 1) as conversion_rate
+      FROM users
+      GROUP BY source
+      ORDER BY conversion_rate DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Conversion by source error:', err.message);
+    res.status(500).json({ error: 'Failed to load conversion data' });
+  }
 });
 
 // Alias: /api/login -> /api/auth/login for convenience

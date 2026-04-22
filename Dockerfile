@@ -2,16 +2,14 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# Install build dependencies for better-sqlite3
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
-
+# No need for python3/make/g++ anymore (removed better-sqlite3 native deps)
 COPY package.json package-lock.json* ./
 RUN npm install --production
 
 COPY . .
 
-# Create data directory
-RUN mkdir -p data assets
+# Create assets directory (no more local data dir needed — using PostgreSQL)
+RUN mkdir -p assets
 
 EXPOSE 3000
 

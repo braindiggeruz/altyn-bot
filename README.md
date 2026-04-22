@@ -1,6 +1,12 @@
-# Алтын Therapy Bot — Telegram CRM v2.2.0
+# Алтын Therapy Bot — Telegram CRM v3.0.0
 
 Telegram бот с квизом, автоматическим прогревом и полноценной CRM-системой для проекта **Алтын Therapy**.
+
+## What's New in v3.0.0
+
+- **PostgreSQL Migration** — Data persists across redeploys (was SQLite)
+- **Webhook Mode** — No more 409 Conflict errors or bot "freezing"
+- **Async Database Layer** — All DB operations are async/await with `pg` pool
 
 ## 🤖 Бот
 
@@ -8,9 +14,9 @@ Telegram бот с квизом, автоматическим прогревом
 
 ## 🚀 Стек
 
-- Node.js 20 + Express
-- node-telegram-bot-api
-- SQLite (better-sqlite3)
+- Node.js 22 + Express
+- node-telegram-bot-api (webhook in production)
+- PostgreSQL (Railway plugin)
 - JWT авторизация
 - Railway (хостинг)
 
@@ -73,7 +79,7 @@ Telegram бот с квизом, автоматическим прогревом
 |:-------|:------|
 | Прогрев сообщения | 10:00 Алматы (05:00 UTC) |
 | Напоминания | Каждые 2 часа |
-| Запланированные рассылки | Каждую минуту |
+| Запланированные рассылки | Каждые 5 минут |
 | Статистика в логи | Каждые 6 часов |
 
 ## 🔗 Связанные репозитории
