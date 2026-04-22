@@ -667,11 +667,33 @@ async function sendQuizResult(chatId, answers) {
     }
   });
 
-  // Notify admin about quiz completion
+  // Notify admin about quiz completion — full lead card
   const user = await getUser(chatId);
   const uname = user?.username ? `@${user.username}` : 'нет username';
+  const scenarioEmoji = { savior: '🛡', fear: '💔', control: '🎯', freeze: '❄️' }[scenario] || '🎭';
+  const scenarioTitle = result.title || scenario;
+  const scoreStr = Object.entries(scores)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(' | ');
+
   notifyAdmin(
-    `📊 *Квиз завершён!*\n\n👤 ${user?.first_name || 'Аноним'} (${uname})\n🎭 Сценарий: *${result.title || scenario}*\n🆔 \`${chatId}\``
+    `🧠 *Новый лид прошёл квиз!*\n\n` +
+    `👤 *Имя:* ${user?.first_name || 'Аноним'} ${user?.last_name || ''}`.trim() + `\n` +
+    `📱 *Telegram:* ${uname}\n` +
+    `🆔 *ID:* \`${chatId}\`\n` +
+    `${scenarioEmoji} *Сценарий:* ${scenarioTitle}\n` +
+    `📊 *Баллы:* ${scoreStr}\n` +
+    `📅 *Время:* ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Almaty' })}\n\n` +
+    `💡 _Человек видит результат и кнопку записи прямо сейчас!_`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }],
+          [{ text: '📝 Открыть CRM', url: 'https://altyn-bot-production.up.railway.app' }]
+        ]
+      }
+    }
   );
 }
 
