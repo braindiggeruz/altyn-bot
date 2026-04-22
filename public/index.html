@@ -551,12 +551,32 @@ async function loadReferrals(){
     <div class="stat-card"><div class="label">Рефереров</div><div class="value">${r?.length||0}</div></div>`;
   document.getElementById('referrals-table').innerHTML=r?.length?`<table><thead><tr><th>Реферер</th><th>Username</th><th>Приглашено</th><th>Конверсии</th></tr></thead>
     <tbody>${r.map(x=>`<tr><td>${x.first_name||x.referrer_telegram_id}</td><td>${x.username?'@'+x.username:'—'}</td><td>${x.total_referrals}</td><td><span class="tag tag-green">${x.conversions}</span></td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:20px">Пока нет</p>'}
+}
 
-async function loadAbTests(){}
+async function loadAbTests(){
+  const b=await api('/broadcasts');if(!b)return;
+  const abTests=b.filter(x=>x.ab_group_id);
+  const groups={};
+  for(const t of abTests){if(!groups[t.ab_group_id])groups[t.ab_group_id]=[];groups[t.ab_group_id].push(t);}
+  const container=document.getElementById('ab-tests-list');
+  if(!container)return;
+  const sn={draft:'Черновик',sending:'Отправка...',sent:'Отправлено',scheduled:'Запланировано',error:'Ошибка'};
+  const sc={draft:'',sending:'tag-blue',sent:'tag-green',scheduled:'tag-gold',error:'tag-red'};
+  if(!Object.keys(groups).length){container.innerHTML='<p style="text-align:center;color:var(--text3);padding:40px">Нет A/B тестов. Создайте первый!</p>';return;}
+  container.innerHTML=Object.entries(groups).map(([gid,variants])=>{
+    const total=variants.reduce((s,v)=>s+(v.sent_count||0),0);
+    const best=variants.reduce((a,b)=>(a.sent_count||0)>(b.sent_count||0)?a:b,variants[0]);
+    return`<div class="panel" style="margin-bottom:16px"><div class="panel-header"><div class="panel-title">🧪 A/B Тест #${gid}</div><span class="tag tag-blue">Вариантов: ${variants.length}</span></div>
+      <table><thead><tr><th>Вариант</th><th>Название</th><th>Статус</th><th>Отправлено</th><th>Ошибки</th><th></th></tr></thead>
+      <tbody>${variants.map(v=>`<tr style="${v.id===best.id&&v.sent_count>0?'background:rgba(74,222,128,0.05)':''}"><td><span class="tag tag-purple">${v.ab_variant}</span>${v.id===best.id&&v.sent_count>0?' 🏆':''}</td>
+        <td><strong>${v.title}</strong></td><td><span class="tag ${sc[v.status]||''}">${sn[v.status]||v.status}</span></td>
+        <td>${v.sent_count||'—'}</td><td>${v.failed_count||'—'}</td>
+        <td>${v.status==='draft'?`<button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${v.id})">📤</button>`:''}</td></tr>`).join('')}</tbody></table>
+      <div style="margin-top:12px;font-size:12px;color:var(--text3)">Всего отправлено: ${total}</div></div>`}).join('');}
 async function createAbTest(){const t=document.getElementById('ab-title').value,a=document.getElementById('ab-content-a').value,b=document.getElementById('ab-content-b').value;
   if(!t||!a||!b)return toast('Заполните',true);
   await api('/broadcasts/ab-test',{method:'POST',body:JSON.stringify({title:t,segment:document.getElementById('ab-segment').value,variants:[{content:a},{content:b}]})});
-  closeModal('ab-test-modal');toast('A/B тест создан! См. Рассылки')}
+  closeModal('ab-test-modal');loadAbTests();toast('A/B тест создан!')}
 
 async function loadHeatmap(){
   const d=await api('/dashboard/heatmap');if(!d)return;

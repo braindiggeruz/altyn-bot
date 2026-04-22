@@ -883,6 +883,106 @@ export async function sendReminders() {
     }
     await new Promise(r => setTimeout(r, 100));
   }
+
+  // 5. Follow-up after diagnostic: 1 day after booking confirmed — reminder about session
+  const sessionReminderResult = await pool.query(`
+    SELECT * FROM users
+    WHERE booking_status = 'booked'
+    AND booking_time IS NOT NULL
+    AND updated_at <= NOW() - INTERVAL '20 hours'
+    AND updated_at >= NOW() - INTERVAL '28 hours'
+  `);
+
+  for (const user of sessionReminderResult.rows) {
+    try {
+      const name = user.booking_name || user.first_name || 'друг';
+      const time = user.booking_time || 'запланированное время';
+      await bot.sendMessage(user.telegram_id,
+        `🔔 *Напоминание о диагностике*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nДиагностика пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите в WhatsApp, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }]
+            ]
+          }
+        }
+      );
+      await logEvent('session_reminder_sent', user.telegram_id, { booking_time: time });
+    } catch (err) {
+      await handleBlockedUser(user.telegram_id, err);
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // 6. Reactivation: users who completed quiz but never booked, inactive 7+ days
+  const reactivationResult = await pool.query(`
+    SELECT * FROM users
+    WHERE funnel_stage = 'quiz_completed'
+    AND (booking_status IS NULL OR booking_status = 'none')
+    AND warmup_active = 0
+    AND exit_reason IS NULL
+    AND updated_at <= NOW() - INTERVAL '7 days'
+    AND updated_at >= NOW() - INTERVAL '8 days'
+  `);
+
+  for (const user of reactivationResult.rows) {
+    try {
+      const name = user.first_name || 'друг';
+      const scenario = user.scenario || 'freeze';
+      const scenarioEmoji = { savior: '🛡', fear: '💔', control: '🎯', freeze: '❄️' }[scenario] || '🎭';
+      const scenarioNames = { savior: 'Спасатель', fear: 'Страх близости', control: 'Гиперконтроль', freeze: 'Заморозка' };
+      const scenarioName = scenarioNames[scenario] || scenario;
+      await bot.sendMessage(user.telegram_id,
+        `${scenarioEmoji} *${name}, вы ещё думаете?*\n\nНеделю назад вы прошли тест и узнали свой сценарий — *«${scenarioName}»*.\n\nЯ понимаю: принять решение непросто. Но пока вы думаете, сценарий продолжает работать. Каждый день.\n\n💬 Я предлагаю просто поговорить — 30 минут, бесплатно, без обязательств. Только чтобы разобраться, подходит ли вам гипнотерапия.\n\nМест на этой неделе осталось немного.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
+              [{ text: '💬 Написать в WhatsApp', url: 'https://wa.me/77077198561' }]
+            ]
+          }
+        }
+      );
+      await updateUser(user.telegram_id, { warmup_active: 1, warmup_day: 7 });
+      await logEvent('reactivation_sent', user.telegram_id, { scenario });
+    } catch (err) {
+      await handleBlockedUser(user.telegram_id, err);
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // 7. Post-session follow-up: 2 days after session completed — offer next step
+  const postSessionResult = await pool.query(`
+    SELECT * FROM users
+    WHERE booking_status = 'confirmed'
+    AND updated_at <= NOW() - INTERVAL '2 days'
+    AND updated_at >= NOW() - INTERVAL '3 days'
+  `);
+
+  for (const user of postSessionResult.rows) {
+    try {
+      const name = user.booking_name || user.first_name || 'друг';
+      await bot.sendMessage(user.telegram_id,
+        `🌟 *${name}, как прошла диагностика?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса.\n\nПосле диагностики многие клиенты замечают:\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже\n\nЕсли вы готовы к следующему шагу — полная программа гипнотерапии (8 сессий) даёт устойчивый результат.\n\n_Напишите мне — обсудим ваш путь._`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }],
+              [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
+            ]
+          }
+        }
+      );
+      await updateUser(user.telegram_id, { booking_status: 'completed' });
+      await logEvent('post_session_followup_sent', user.telegram_id, {});
+    } catch (err) {
+      await handleBlockedUser(user.telegram_id, err);
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
 }
 
 // ============================================================
