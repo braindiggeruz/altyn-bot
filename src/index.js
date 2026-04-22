@@ -54,7 +54,7 @@ app.use('/api', adminRouter);
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.2.0',
+    version: '2.3.0',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     notify_group: process.env.NOTIFY_GROUP_ID ? 'configured' : 'not set',
@@ -79,7 +79,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Admin panel v2.2.0 running on port ${PORT}`);
+  console.log(`🌐 Admin panel v2.3.0 running on port ${PORT}`);
 }).on('error', (err) => {
   console.error('Server error:', err.message);
   if (err.code === 'EADDRINUSE') {
@@ -138,7 +138,7 @@ cron.schedule('0 */6 * * *', async () => {
   }
 });
 
-console.log('✅ Altyn Therapy System v2.2.0 started');
+console.log('✅ Altyn Therapy System v2.3.0 started');
 console.log(`🤖 Bot: @altyntherapybot`);
 console.log(`🌐 Admin: http://localhost:${PORT}`);
 console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);
