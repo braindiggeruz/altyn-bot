@@ -3,13 +3,13 @@
 // Brand: burgundy #6B1D3A, rose #D4A0A0, gold accents
 // ============================================================
 
-export const WELCOME_IMAGE = '/home/ubuntu/altyn-bot/assets/welcome.png';
+export const WELCOME_IMAGE = './assets/welcome.png';
 
 export const RESULT_IMAGES = {
-  savior: '/home/ubuntu/altyn-bot/assets/result_savior.png',
-  fear: '/home/ubuntu/altyn-bot/assets/result_fear.png',
-  control: '/home/ubuntu/altyn-bot/assets/result_control.png',
-  freeze: '/home/ubuntu/altyn-bot/assets/result_freeze.png'
+  savior: './assets/result_savior.png',
+  fear: './assets/result_fear.png',
+  control: './assets/result_control.png',
+  freeze: './assets/result_freeze.png'
 };
 
 export const WELCOME_TEXT = `✨ *АЛТЫН | Гипнотерапевт*

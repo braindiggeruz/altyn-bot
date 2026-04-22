@@ -624,7 +624,7 @@ export function initBot(token) {
     }
   });
 
-  console.log('🤖 Altyn Therapy Bot v2.2.0 started');
+  console.log('🤖 Altyn Therapy Bot v2.4.0 started');
   return bot;
 }
 
@@ -845,13 +845,13 @@ export async function sendReminders() {
     }
     await new Promise(r => setTimeout(r, 100));
   }
-  // 3. Booking reminders: users who started booking but didn't finish
+  // 3. Booking reminders: users who started booking but didn't finish (30 min)
   const bookingStuck = db.prepare(`
     SELECT * FROM users 
     WHERE funnel_stage = 'booking' 
     AND booking_status = 'none'
     AND updated_at <= datetime('now', '-30 minutes')
-    AND updated_at >= datetime('now', '-24 hours')
+    AND updated_at >= datetime('now', '-2 hours')
   `).all();
   for (const user of bookingStuck) {
     try {
@@ -865,6 +865,32 @@ export async function sendReminders() {
         }
       });
       logEvent('reminder_sent', user.telegram_id, { type: 'booking_30min' });
+    } catch (err) {
+      handleBlockedUser(user.telegram_id, err);
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // 4. Booking reminders: users who started booking 24h+ ago but didn't finish
+  const bookingAbandoned = db.prepare(`
+    SELECT * FROM users 
+    WHERE funnel_stage = 'booking' 
+    AND booking_status = 'none'
+    AND updated_at <= datetime('now', '-24 hours')
+    AND updated_at >= datetime('now', '-48 hours')
+  `).all();
+  for (const user of bookingAbandoned) {
+    try {
+      await bot.sendMessage(user.telegram_id, BOOKING_REMINDER_24H, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📝 Записаться сейчас', callback_data: 'book_diagnostic' }],
+            [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+          ]
+        }
+      });
+      logEvent('reminder_sent', user.telegram_id, { type: 'booking_24h' });
     } catch (err) {
       handleBlockedUser(user.telegram_id, err);
     }
