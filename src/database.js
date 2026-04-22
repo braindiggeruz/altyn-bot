@@ -5,7 +5,9 @@ const { Pool } = pg;
 // Use DATABASE_URL from Railway PostgreSQL plugin, fallback to individual params
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
+  ssl: (process.env.DATABASE_URL && 
+        !process.env.DATABASE_URL.includes('localhost') && 
+        !process.env.DATABASE_URL.includes('.railway.internal'))
     ? { rejectUnauthorized: false }
     : false,
   max: 20,
