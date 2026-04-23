@@ -319,4 +319,83 @@ export const getBroadcastUsers = async (segment) => {
   return result.rows.map(r => r.telegram_id);
 };
 
+// ==================== ADMIN PANEL FUNCTIONS (STUBS) ====================
+// These are placeholder functions for admin panel compatibility
+// They can be implemented later if needed
+
+export const createBroadcast = async (data) => {
+  // Stub: create broadcast
+  return { id: Date.now(), ...data };
+};
+
+export const getBroadcasts = async () => {
+  // Stub: get all broadcasts
+  return [];
+};
+
+export const getReferralStats = async () => {
+  // Stub: get referral statistics
+  return { total: 0, active: 0 };
+};
+
+export const getReferralCount = async () => {
+  // Stub: get referral count
+  return 0;
+};
+
+export const getTemplates = async () => {
+  // Stub: get message templates
+  return [];
+};
+
+export const createTemplate = async (data) => {
+  // Stub: create template
+  return { id: Date.now(), ...data };
+};
+
+export const deleteTemplate = async (id) => {
+  // Stub: delete template
+  return true;
+};
+
+export const getUtmLinks = async () => {
+  // Stub: get UTM links
+  return [];
+};
+
+export const createUtmLink = async (data) => {
+  // Stub: create UTM link
+  return { id: Date.now(), ...data };
+};
+
+export const deleteUtmLink = async (id) => {
+  // Stub: delete UTM link
+  return true;
+};
+
+export const getUserTasks = async (userId) => {
+  // Stub: get user tasks
+  return [];
+};
+
+export const createUserTask = async (data) => {
+  // Stub: create user task
+  return { id: Date.now(), ...data };
+};
+
+export const updateUserTask = async (id, fields) => {
+  // Stub: update user task
+  return true;
+};
+
+export const getCohortData = async () => {
+  // Stub: get cohort data
+  return [];
+};
+
+export const getUsersForExport = async (filters = {}) => {
+  // Stub: get users for export
+  return [];
+};
+
 export { pool };
