@@ -916,14 +916,15 @@ export async function sendReminders() {
   }
 
   // 6. Reactivation: users who completed quiz but never booked, inactive 7+ days
+  // FIX v4.2.0: Removed warmup_active = 0 condition that was blocking reactivation
+  // Reactivation should trigger for users who haven't booked, regardless of warmup status
   const reactivationResult = await pool.query(`
     SELECT * FROM users
     WHERE funnel_stage = 'quiz_completed'
     AND (booking_status IS NULL OR booking_status = 'none')
-    AND warmup_active = 0
     AND exit_reason IS NULL
-    AND updated_at <= NOW() - INTERVAL '7 days'
-    AND updated_at >= NOW() - INTERVAL '8 days'
+    AND last_active <= NOW() - INTERVAL '7 days'
+    AND last_active >= NOW() - INTERVAL '8 days'
   `);
 
   for (const user of reactivationResult.rows) {
@@ -934,7 +935,7 @@ export async function sendReminders() {
       const scenarioNames = { savior: 'Спасатель', fear: 'Страх близости', control: 'Гиперконтроль', freeze: 'Заморозка' };
       const scenarioName = scenarioNames[scenario] || scenario;
       await bot.sendMessage(user.telegram_id,
-        `${scenarioEmoji} *${name}, вы ещё думаете?*\n\nНеделю назад вы прошли тест и узнали свой сценарий — *«${scenarioName}»*.\n\nЯ понимаю: принять решение непросто. Но пока вы думаете, сценарий продолжает работать. Каждый день.\n\n💬 Я предлагаю просто поговорить — 30 минут, бесплатно, без обязательств. Только чтобы разобраться, подходит ли вам гипнотерапия.\n\nМест на этой неделе осталось немного.`,
+        `${scenarioEmoji} *${name}, вы ещё думаете?*\n\nНеделю назад вы прошли тест и узнали свой сценарий — *«${scenarioName}»*.\n\nЯ понимаю: принять решение непросто. Но пока вы думаете, сценарий продолжает работать. Каждый день.\n\n*Вот что происходит в вашей психике:*\n◇ Сценарий автоматически повторяется в отношениях\n◇ Вы теряете возможности и деньги\n◇ Каждый день становится сложнее\n\n💬 Я предлагаю просто поговорить — 30 минут, бесплатно, без обязательств. На диагностике вы:\n◇ Поймёте корень проблемы\n◇ Почувствуете первые изменения\n◇ Узнаете план работы\n\nМест на этой неделе осталось немного. Запишитесь сейчас 👇`,
         {
           parse_mode: 'Markdown',
           reply_markup: {
@@ -946,7 +947,7 @@ export async function sendReminders() {
         }
       );
       await updateUser(user.telegram_id, { warmup_active: 1, warmup_day: 7 });
-      await logEvent('reactivation_sent', user.telegram_id, { scenario });
+      await logEvent('reactivation_sent', user.telegram_id, { scenario, days_inactive: 7 });
     } catch (err) {
       await handleBlockedUser(user.telegram_id, err);
     }
@@ -954,18 +955,22 @@ export async function sendReminders() {
   }
 
   // 7. Post-session follow-up: 2 days after session completed — offer next step
+  // FIX v4.2.0: Use session_completed_at instead of updated_at for accurate follow-up timing
+  // Only send if not already sent (post_session_followup_sent = 0)
   const postSessionResult = await pool.query(`
     SELECT * FROM users
     WHERE booking_status = 'confirmed'
-    AND updated_at <= NOW() - INTERVAL '2 days'
-    AND updated_at >= NOW() - INTERVAL '3 days'
+    AND session_completed_at IS NOT NULL
+    AND post_session_followup_sent = 0
+    AND session_completed_at <= NOW() - INTERVAL '2 days'
+    AND session_completed_at >= NOW() - INTERVAL '3 days'
   `);
 
   for (const user of postSessionResult.rows) {
     try {
       const name = user.booking_name || user.first_name || 'друг';
       await bot.sendMessage(user.telegram_id,
-        `🌟 *${name}, как прошла диагностика?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса.\n\nПосле диагностики многие клиенты замечают:\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже\n\nЕсли вы готовы к следующему шагу — полная программа гипнотерапии (8 сессий) даёт устойчивый результат.\n\n_Напишите мне — обсудим ваш путь._`,
+        `🌟 *${name}, как прошла диагностика?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса. Это уже результат.\n\n*Что заметили клиенты после диагностики:*\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже и менять ситуацию\n\n*Следующий шаг:*\nПолная программа гипнотерапии (8 сессий) даёт *устойчивый результат*. Многие клиенты видят изменения уже после 3-4 сессий.\n\n💰 *Цена:* 50,000 тенге за программу (или 7,000 за сессию)\n⏱️ *Длительность:* 1 месяц (2 сессии в неделю)\n✅ *Гарантия:* Если не почувствуете результат — вернём 50% стоимости\n\n_Напишите мне — обсудим ваш путь._`,
         {
           parse_mode: 'Markdown',
           reply_markup: {
@@ -976,8 +981,8 @@ export async function sendReminders() {
           }
         }
       );
-      await updateUser(user.telegram_id, { booking_status: 'completed' });
-      await logEvent('post_session_followup_sent', user.telegram_id, {});
+      await updateUser(user.telegram_id, { booking_status: 'completed', post_session_followup_sent: 1 });
+      await logEvent('post_session_followup_sent', user.telegram_id, { session_completed_at: user.session_completed_at });
     } catch (err) {
       await handleBlockedUser(user.telegram_id, err);
     }
