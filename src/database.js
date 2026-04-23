@@ -195,7 +195,7 @@ export const createUser = async (userData) => {
   return result.rows[0];
 };
 
-export const updateUser = async (telegramId, fields) => {
+export const updateUser = async (telegramId, fields, skipLastActive = false) => {
   const keys = Object.keys(fields).filter(k => fields[k] !== undefined);
   if (keys.length === 0) return;
   const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
@@ -204,12 +204,17 @@ export const updateUser = async (telegramId, fields) => {
   
   // FIX v4.2.0: Only update 'updated_at' for significant funnel changes, not every update
   // This prevents reminder windows from being shifted by admin edits or internal updates
+  // FIX v4.5.0: Skip last_active update when skipLastActive=true (for bot-initiated messages)
   const significantFields = ['funnel_stage', 'scenario', 'booking_status', 'quiz_answers'];
   const hasSignificantChange = keys.some(k => significantFields.includes(k));
   
-  const updateClause = hasSignificantChange 
-    ? `${sets}, updated_at = NOW(), last_active = NOW()` 
-    : `${sets}, last_active = NOW()`;
+  let updateClause = sets;
+  if (hasSignificantChange) {
+    updateClause += `, updated_at = NOW()`;
+  }
+  if (!skipLastActive) {
+    updateClause += `, last_active = NOW()`;
+  }
   
   await pool.query(
     `UPDATE users SET ${updateClause} WHERE telegram_id = $${values.length}`,

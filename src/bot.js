@@ -87,7 +87,7 @@ async function handleBlockedUser(telegramId, err) {
     (err.response && err.response.statusCode === 403) ||
     (err.code === 'ETELEGRAM' && err.message && err.message.includes('403'))
   ) {
-    await updateUser(telegramId, { warmup_active: 0 });
+    await updateUser(telegramId, { warmup_active: 0 }, true);
     console.log(`🚫 User ${telegramId} blocked bot — warmup disabled`);
     return true;
   }
@@ -394,7 +394,10 @@ export function initBot(token, app) {
     // ---- Confirm booking (admin) ----
     if (data.startsWith('confirm_booking_')) {
       const targetId = parseInt(data.replace('confirm_booking_', ''));
-      await updateUser(targetId, { booking_status: 'confirmed' });
+      await updateUser(targetId, { 
+        booking_status: 'confirmed',
+        session_completed_at: new Date().toISOString()
+      }, true);
       try {
         await bot.sendMessage(targetId, '✅ *Ваша запись подтверждена!*\n\nАлтын свяжется с вами в ближайшее время. Ожидайте сообщение!', {
           parse_mode: 'Markdown'
@@ -429,7 +432,7 @@ export function initBot(token, app) {
 
     // ---- Exit survey answers ----
     if (data.startsWith('exit_')) {
-      await updateUser(chatId, { exit_reason: data, warmup_active: 0 });
+      await updateUser(chatId, { exit_reason: data, warmup_active: 0 }, true);
       await logEvent('exit_survey_answer', chatId, { reason: data });
       await removeKeyboard(chatId, messageId);
 
@@ -547,7 +550,7 @@ export function initBot(token, app) {
           }
         });
 
-        await updateUser(chatId, { warmup_active: 0 });
+        await updateUser(chatId, { warmup_active: 0 }, true);
         return;
       }
     }
@@ -739,7 +742,7 @@ export async function sendWarmupMessages() {
   for (const user of users) {
     if (!user.warmup_active) continue;
     if (['booked', 'confirmed', 'completed'].includes(user.booking_status)) {
-      await updateUser(user.telegram_id, { warmup_active: 0 });
+      await updateUser(user.telegram_id, { warmup_active: 0 }, true);
       continue;
     }
     if (!user.scenario && user.funnel_stage !== 'quiz_completed') continue;
@@ -762,7 +765,7 @@ export async function sendWarmupMessages() {
         if (!user.exit_reason) {
           await sendExitSurvey(user.telegram_id);
         }
-        await updateUser(user.telegram_id, { warmup_active: 0 });
+        await updateUser(user.telegram_id, { warmup_active: 0 }, true);
       }
       continue;
     }
@@ -788,7 +791,7 @@ export async function sendWarmupMessages() {
         await bot.sendMessage(user.telegram_id, testimonials[idx], { parse_mode: 'Markdown' });
       }
 
-      await updateUser(user.telegram_id, { warmup_day: nextDay });
+      await updateUser(user.telegram_id, { warmup_day: nextDay }, true);
       await logMessage(user.telegram_id, 'out', 'warmup', `Day ${nextDay} (${scenario || 'generic'})`);
       await logEvent('warmup_sent', user.telegram_id, { day: nextDay, scenario });
     } catch (err) {
@@ -978,7 +981,7 @@ export async function sendReminders() {
           }
         }
       );
-      await updateUser(user.telegram_id, { warmup_active: 1, warmup_day: 7 });
+      await updateUser(user.telegram_id, { warmup_active: 1, warmup_day: 7 }, true);
       await logEvent('reactivation_sent', user.telegram_id, { scenario, days_inactive: 7 });
     } catch (err) {
       await handleBlockedUser(user.telegram_id, err);
@@ -1013,7 +1016,7 @@ export async function sendReminders() {
           }
         }
       );
-      await updateUser(user.telegram_id, { booking_status: 'completed', post_session_followup_sent: 1 });
+      await updateUser(user.telegram_id, { booking_status: 'completed', post_session_followup_sent: 1 }, true);
       await logEvent('post_session_followup_sent', user.telegram_id, { session_completed_at: user.session_completed_at });
     } catch (err) {
       await handleBlockedUser(user.telegram_id, err);
@@ -1073,7 +1076,7 @@ export async function sendTornadoReactivation(botInstance, dbPool) {
         }
       });
 
-      // Обновляем счётчик
+      // Обновляем счётчик (не обновляем last_active при отправке ботом)
       await pool.query(
         `UPDATE users SET tornado_day = $1, tornado_last_sent = NOW() WHERE telegram_id = $2`,
         [nextDay, user.telegram_id]
