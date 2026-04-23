@@ -117,12 +117,17 @@ export function initBot(token, app) {
     if (app) {
       app.post(webhookPath, (req, res) => {
         try {
-          console.log(`📨 [${new Date().toISOString()}] Webhook received update from Telegram`);
-          bot.processUpdate(req.body);
+          const body = req.body;
+          const updateType = body?.message ? 'message' : body?.callback_query ? 'callback' : 'other';
+          const fromId = body?.message?.from?.id || body?.callback_query?.from?.id || 'unknown';
+          const text = body?.message?.text?.substring(0, 30) || body?.callback_query?.data || '';
+          console.log(`📨 [${new Date().toISOString()}] Webhook: ${updateType} from ${fromId}: ${text}`);
+          bot.processUpdate(body);
           res.sendStatus(200);
         } catch (err) {
-          console.error(`❌ Webhook processUpdate error:`, err.message);
-          res.sendStatus(500);
+          console.error(`❌ Webhook processUpdate error:`, err.message, err.stack);
+          if (global.__addError) global.__addError('webhook', err.message, err.stack);
+          res.sendStatus(200); // Always return 200 to prevent Telegram retries
         }
       });
       console.log(`✅ Webhook route registered at POST ${webhookPath}`);
@@ -143,8 +148,10 @@ export function initBot(token, app) {
 
   // /start command
   bot.onText(/\/start(.*)/, async (msg, match) => {
+   try {
     const chatId = msg.chat.id;
     const param = match[1] ? match[1].trim() : '';
+    console.log(`📩 /start received from ${chatId} (param: '${param}')`);
 
     let source = 'organic';
     let utm = {};
@@ -249,21 +256,31 @@ export function initBot(token, app) {
     }
 
     await logMessage(chatId, 'out', 'welcome', 'Welcome message sent');
+    console.log(`✅ /start completed for ${chatId}`);
 
     const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
     const uname = msg.from.username ? `@${msg.from.username}` : 'нет username';
     notifyAdmin(
       `🆕 *Новый пользователь!*\n\n👤 ${name}\n📱 ${uname}\n🆔 \`${chatId}\`\n📊 Источник: ${source}${referrerId ? `\n🔗 Реферал от: ${referrerId}` : ''}`
     );
+   } catch (fatalErr) {
+    console.error(`❌ FATAL /start error for ${msg?.chat?.id}:`, fatalErr.message, fatalErr.stack);
+    if (global.__addError) global.__addError('/start', fatalErr.message, fatalErr.stack);
+    try {
+      await bot.sendMessage(msg.chat.id, '⚠️ Произошла ошибка. Попробуйте ещё раз через минуту или напишите /start', { parse_mode: 'Markdown' });
+    } catch(e) { console.error('Could not send error message:', e.message); }
+   }
   });
 
   // ============================================================
   // CALLBACK QUERIES
   // ============================================================
   bot.on('callback_query', async (query) => {
+   try {
     const chatId = query.message.chat.id;
     const messageId = query.message.message_id;
     const data = query.data;
+    console.log(`📩 Callback received: ${data} from ${chatId}`);
 
     await bot.answerCallbackQuery(query.id);
 
@@ -458,17 +475,24 @@ export function initBot(token, app) {
       }
       return;
     }
+   } catch (fatalErr) {
+    console.error(`❌ FATAL callback error for ${query?.message?.chat?.id}:`, fatalErr.message, fatalErr.stack);
+    if (global.__addError) global.__addError('callback', fatalErr.message, fatalErr.stack);
+    try {
+      await bot.sendMessage(query.message.chat.id, '⚠️ Произошла ошибка. Попробуйте ещё раз.');
+    } catch(e) {}
+   }
   });
-
   // ============================================================
-  // TEXT MESSAGES — State-machine booking flow
+  // TEXT MESSAGES — State-machine booking floww
   // ============================================================
   bot.on('message', async (msg) => {
+   try {
     if (!msg.text) return;
     if (msg.text.startsWith('/')) return;
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') return;
-
     const chatId = msg.chat.id;
+    console.log(`📩 Message received from ${chatId}: ${msg.text?.substring(0, 50)}`);
     const user = await getUser(chatId);
     if (!user) return;
 
@@ -554,6 +578,10 @@ export function initBot(token, app) {
         return;
       }
     }
+   } catch (fatalErr) {
+    console.error(`❌ FATAL message error for ${msg?.chat?.id}:`, fatalErr.message, fatalErr.stack);
+    if (global.__addError) global.__addError('message', fatalErr.message, fatalErr.stack);
+   }
   });
 
   // ============================================================

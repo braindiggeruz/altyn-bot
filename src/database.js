@@ -196,25 +196,30 @@ export const createUser = async (userData) => {
 };
 
 export const updateUser = async (telegramId, fields, skipLastActive = false) => {
-  const keys = Object.keys(fields).filter(k => fields[k] !== undefined);
-  if (keys.length === 0) return;
+  // FIX v4.6.0: Filter out undefined values AND auto-managed fields to prevent duplicates
+  const autoFields = ['last_active', 'updated_at'];
+  const keys = Object.keys(fields).filter(k => fields[k] !== undefined && !autoFields.includes(k));
+  if (keys.length === 0 && skipLastActive) return;
+  
   const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
   const values = keys.map(k => fields[k]);
   values.push(telegramId);
   
-  // FIX v4.2.0: Only update 'updated_at' for significant funnel changes, not every update
-  // This prevents reminder windows from being shifted by admin edits or internal updates
+  // FIX v4.2.0: Only update 'updated_at' for significant funnel changes
   // FIX v4.5.0: Skip last_active update when skipLastActive=true (for bot-initiated messages)
+  // FIX v4.6.0: Prevent duplicate column names in SET clause
   const significantFields = ['funnel_stage', 'scenario', 'booking_status', 'quiz_answers'];
   const hasSignificantChange = keys.some(k => significantFields.includes(k));
   
   let updateClause = sets;
   if (hasSignificantChange) {
-    updateClause += `, updated_at = NOW()`;
+    updateClause += (updateClause ? ', ' : '') + `updated_at = NOW()`;
   }
   if (!skipLastActive) {
-    updateClause += `, last_active = NOW()`;
+    updateClause += (updateClause ? ', ' : '') + `last_active = NOW()`;
   }
+  
+  if (!updateClause) return;
   
   await pool.query(
     `UPDATE users SET ${updateClause} WHERE telegram_id = $${values.length}`,
@@ -401,6 +406,17 @@ export const getCohortData = async () => {
 export const getUsersForExport = async (filters = {}) => {
   // Stub: get users for export
   return [];
+};
+
+export const trackReferral = async (referrerId, referredId) => {
+  try {
+    await pool.query(
+      'INSERT INTO referrals (referrer_telegram_id, referred_telegram_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [referrerId, referredId]
+    );
+  } catch (err) {
+    console.error('trackReferral error:', err.message);
+  }
 };
 
 export { pool };

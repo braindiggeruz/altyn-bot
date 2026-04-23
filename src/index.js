@@ -61,6 +61,22 @@ async function startApp() {
     // API routes
     app.use('/api', adminRouter);
 
+    // Debug endpoint - last errors
+    const errorLog = [];
+    const MAX_ERRORS = 50;
+    global.__addError = (source, msg, stack) => {
+      errorLog.unshift({ time: new Date().toISOString(), source, msg, stack: stack?.substring(0, 500) });
+      if (errorLog.length > MAX_ERRORS) errorLog.length = MAX_ERRORS;
+    };
+    app.get('/debug', (req, res) => {
+      res.json({
+        errors: errorLog,
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        timestamp: new Date().toISOString()
+      });
+    });
+
     // Health check
     app.get('/health', (req, res) => {
       const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -69,7 +85,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '4.5.0',
+        version: '4.6.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),

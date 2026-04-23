@@ -1,0 +1,6 @@
+This is the plan:
+1. Add a /debug endpoint that shows last errors
+2. Add error logging to /start handler
+3. Add trackReferral function to database.js
+4. Fix duplicate last_active in updateUser
+5. Add comprehensive try/catch to all handlers
