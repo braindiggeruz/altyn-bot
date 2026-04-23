@@ -159,7 +159,7 @@ async function startApp() {
         const now = new Date().toISOString();
         console.log(`⏰ [${now}] CRON: Running STEEL E2E TESTS (04:00 Almaty)...`);
         const { spawn } = await import('child_process');
-        const test = spawn('node', ['e2e-steel-tests.js'], { cwd: __dirname });
+        const test = spawn('node', ['../e2e-steel-tests.js'], { cwd: __dirname });
         test.on('close', (code) => {
           if (code === 0) {
             console.log(`✅ [${new Date().toISOString()}] CRON: E2E TESTS passed`);
