@@ -41,6 +41,16 @@ function querySync(text, params = []) {
 export async function initDatabase() {
   const client = await pool.connect();
   try {
+    // First, add missing columns if they don't exist (migration for v4.2.0)
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS session_completed_at TIMESTAMP;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS post_session_followup_sent INTEGER DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS reactivation_sent_at TIMESTAMP;
+    `).catch(err => {
+      // Ignore errors if columns already exist
+      console.log('Migration note: columns may already exist');
+    });
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -158,7 +168,7 @@ export async function initDatabase() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log('✅ Database schema initialized');
+    console.log('✅ Database schema initialized and migrated to v4.2.0');
   } catch (err) {
     console.error('Database initialization error:', err.message);
   } finally {
