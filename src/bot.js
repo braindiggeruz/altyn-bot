@@ -13,7 +13,7 @@ import {
   SCENARIO_WARMUPS, TESTIMONIALS, EXIT_SURVEY_TEXT, EXIT_SURVEY_OPTIONS,
   EXIT_FOLLOWUPS, QUIZ_REMINDER_2H, QUIZ_REMINDER_24H,
   BOOKING_REMINDER_30MIN, BOOKING_REMINDER_24H,
-  REFERRAL_TEXT, REFERRAL_NOTIFY
+  REFERRAL_TEXT, REFERRAL_NOTIFY, TORNADO_MESSAGES
 } from './content.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -392,6 +392,29 @@ export function initBot(token, app) {
         });
       } catch(e) {}
       await bot.sendMessage(chatId, `✅ Запись для пользователя ${targetId} подтверждена.`);
+      return;
+    }
+
+    // ---- TORNADO stop ----
+    if (data === 'tornado_stop') {
+      await pool.query(
+        `UPDATE users SET tornado_day = 30, exit_reason = 'tornado_stop' WHERE telegram_id = $1`,
+        [chatId]
+      );
+      await logEvent('tornado_stopped', chatId, {});
+      await bot.answerCallbackQuery(callbackQuery.id);
+      await bot.sendMessage(chatId,
+        `✅ Поняла. Больше не буду беспокоить.
+
+Если передумаете — напишите мне любое сообщение или запишитесь через WhatsApp. 🙏`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Написать Алтын', url: 'https://t.me/altyntherapy' }]
+            ]
+          }
+        }
+      );
       return;
     }
 
@@ -987,6 +1010,74 @@ export async function sendReminders() {
       await handleBlockedUser(user.telegram_id, err);
     }
     await new Promise(r => setTimeout(r, 100));
+  }
+}
+
+// ============================================================
+// 🌪️ TORNADO REACTIVATION — 30-дневная цепочка реактивации
+// v4.3.0: Психологический шторм. Гладко, но убойно.
+// ============================================================
+export async function sendTornadoReactivation(botInstance, dbPool) {
+  const b = botInstance || bot;
+  if (!b) return;
+
+  // Найти всех пользователей которые:
+  // 1. Прошли квиз но не записались
+  // 2. Неактивны 7+ дней
+  // 3. Не заблокировали бота
+  // 4. Не завершили ТОРНАДО (tornado_day < 30)
+  // 5. Не получали сообщение сегодня
+  const result = await pool.query(`
+    SELECT * FROM users
+    WHERE funnel_stage IN ('quiz_completed', 'warmup')
+    AND (booking_status IS NULL OR booking_status = 'none')
+    AND exit_reason IS NULL
+    AND last_active <= NOW() - INTERVAL '7 days'
+    AND (tornado_day IS NULL OR tornado_day < 30)
+    AND (
+      tornado_last_sent IS NULL
+      OR tornado_last_sent < NOW() - INTERVAL '23 hours'
+    )
+    ORDER BY last_active ASC
+    LIMIT 100
+  `);
+
+  console.log(`🌪️ TORNADO: Found ${result.rows.length} users to reactivate`);
+
+  for (const user of result.rows) {
+    const currentDay = (user.tornado_day || 0);
+    const nextDay = currentDay + 1;
+    const msg = TORNADO_MESSAGES[nextDay - 1];
+
+    if (!msg) continue;
+
+    try {
+      // Отправляем картинку с текстом
+      await b.sendPhoto(user.telegram_id, msg.image, {
+        caption: msg.text,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: msg.button, url: msg.url }],
+            [{ text: '🛑 Не беспокоить', callback_data: 'tornado_stop' }]
+          ]
+        }
+      });
+
+      // Обновляем счётчик
+      await pool.query(
+        `UPDATE users SET tornado_day = $1, tornado_last_sent = NOW() WHERE telegram_id = $2`,
+        [nextDay, user.telegram_id]
+      );
+
+      await logEvent('tornado_sent', user.telegram_id, { day: nextDay });
+      console.log(`✅ TORNADO Day ${nextDay} sent to ${user.telegram_id}`);
+    } catch (err) {
+      await handleBlockedUser(user.telegram_id, err);
+    }
+
+    // Пауза между отправками — не спамим Telegram API
+    await new Promise(r => setTimeout(r, 300));
   }
 }
 

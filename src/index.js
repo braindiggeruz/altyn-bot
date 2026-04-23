@@ -6,7 +6,8 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 import { initDatabase } from './database.js';
-import { initBot, sendWarmupMessages, sendReminders, sendBroadcast } from './bot.js';
+import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation } from './bot.js';
+import { TORNADO_MESSAGES } from './content.js';
 import adminRouter from './admin-api.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,7 +65,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '4.1.0',
+        version: '4.3.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
@@ -141,6 +142,16 @@ async function startApp() {
       }
     });
 
+    // 🌪️ TORNADO: Send reactivation messages daily at 10:00 AM Almaty (UTC+5 = 05:00 UTC)
+    // Runs AFTER warmup messages (warmup at 05:00, tornado at 05:30)
+    cron.schedule('30 5 * * *', () => {
+      const now = new Date().toISOString();
+      console.log(`⏰ [${now}] CRON: Running TORNADO reactivation (10:30 Almaty)...`);
+      sendTornadoReactivation()
+        .then(() => console.log(`✅ [${new Date().toISOString()}] CRON: TORNADO done`))
+        .catch(err => console.error(`❌ CRON TORNADO error:`, err.message));
+    });
+
     // Log stats every 6 hours
     cron.schedule('0 */6 * * *', async () => {
       try {
@@ -158,7 +169,7 @@ async function startApp() {
     });
 
     const mode = process.env.RAILWAY_PUBLIC_DOMAIN ? 'WEBHOOK' : 'POLLING';
-    console.log(`✅ Altyn Therapy System v4.1.0 started (${mode} mode, PostgreSQL)`);
+    console.log(`✅ Altyn Therapy System v4.3.0 started (${mode} mode, PostgreSQL)`);
     console.log(`🤖 Bot: @altyntherapybot`);
     console.log(`🌐 Admin: http://localhost:${PORT}`);
     console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);
@@ -167,6 +178,8 @@ async function startApp() {
     console.log('   - Reminders: every 2 hours (quiz stuck, booking stuck)');
     console.log('   - Broadcasts: every 5 minutes (scheduled)');
     console.log('   - Stats: every 6 hours');
+    console.log('   - 🌪️ TORNADO: daily at 10:30 Almaty (05:30 UTC)');
+    console.log(`   - TORNADO messages: ${TORNADO_MESSAGES?.length || 30} days loaded`);
 
   } catch (err) {
     console.error('❌ Failed to start application:', err);

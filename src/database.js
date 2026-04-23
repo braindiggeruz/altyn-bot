@@ -42,14 +42,14 @@ export async function initDatabase() {
   const client = await pool.connect();
   try {
     // First, add missing columns if they don't exist (migration for v4.2.0)
-    await client.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS session_completed_at TIMESTAMP;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS post_session_followup_sent INTEGER DEFAULT 0;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS reactivation_sent_at TIMESTAMP;
-    `).catch(err => {
-      // Ignore errors if columns already exist
-      console.log('Migration note: columns may already exist');
-    });
+    // Migration v4.2.0: session tracking fields
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_completed_at TIMESTAMP`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS post_session_followup_sent INTEGER DEFAULT 0`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reactivation_sent_at TIMESTAMP`).catch(() => {});
+    // Migration v4.3.0: TORNADO reactivation fields
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_day INTEGER DEFAULT 0`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_last_sent TIMESTAMP`).catch(() => {});
+    console.log('✅ DB migrations applied (v4.2.0 + v4.3.0)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -80,6 +80,8 @@ export async function initDatabase() {
         session_completed_at TIMESTAMP,
         post_session_followup_sent INTEGER DEFAULT 0,
         reactivation_sent_at TIMESTAMP,
+        tornado_day INTEGER DEFAULT 0,
+        tornado_last_sent TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         last_active TIMESTAMP DEFAULT NOW()
