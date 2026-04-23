@@ -152,6 +152,26 @@ async function startApp() {
         .catch(err => console.error(`❌ CRON TORNADO error:`, err.message));
     });
 
+    // 🛡️ STEEL E2E TESTS: Run daily at 04:00 AM Almaty (UTC+5 = 23:00 UTC previous day)
+    // Runs BEFORE warmup messages to detect issues early
+    cron.schedule('0 23 * * *', async () => {
+      try {
+        const now = new Date().toISOString();
+        console.log(`⏰ [${now}] CRON: Running STEEL E2E TESTS (04:00 Almaty)...`);
+        const { spawn } = await import('child_process');
+        const test = spawn('node', ['e2e-steel-tests.js'], { cwd: __dirname });
+        test.on('close', (code) => {
+          if (code === 0) {
+            console.log(`✅ [${new Date().toISOString()}] CRON: E2E TESTS passed`);
+          } else {
+            console.error(`❌ [${new Date().toISOString()}] CRON: E2E TESTS failed with code ${code}`);
+          }
+        });
+      } catch (err) {
+        console.error('CRON E2E tests error:', err.message);
+      }
+    });
+
     // Log stats every 6 hours
     cron.schedule('0 */6 * * *', async () => {
       try {
