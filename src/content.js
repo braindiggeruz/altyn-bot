@@ -798,7 +798,7 @@ export const TORNADO_MESSAGES = [
   // ── НЕДЕЛЯ 1: ПРОБУЖДЕНИЕ ──────────────────────────────────
   {
     day: 1,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/CTYYnWiFGdjzwmMT.png',
+    image: '/public/tornado-images/day_01.png',
     text: `Вы думаете, что если отпустите контроль — всё рухнет.
 
 Но правда в том, что вы уже рушитесь под его тяжестью.
@@ -811,7 +811,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 2,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/NEwtYgvRWklXuVUg.png',
+    image: '/public/tornado-images/day_02.png',
     text: `Почему мозг выбирает тех, с кем будет больно, но привычно?
 
 Потому что для бессознательного «знакомое» = «безопасное». Даже если это знакомое вас разрушает.
@@ -822,7 +822,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 3,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/HNAlkaHqdGzKTUEx.png',
+    image: '/public/tornado-images/day_03.png',
     text: `4 признака финансового потолка:
 
 1. Вы работаете больше, а доход не растёт
@@ -836,7 +836,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 4,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/FxqGxbToPtCDfKtM.png',
+    image: '/public/tornado-images/day_04.png',
     text: `Многие боятся гипнотерапии, думая, что кто-то залезет им в голову.
 
 Но правда в том, что в вашей голове УЖЕ кто-то сидит: установки родителей, детские травмы, страхи.
@@ -847,7 +847,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 5,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/aEyfmdPPCRIYWrfy.png',
+    image: '/public/tornado-images/day_05.png',
     text: `Вы думаете, что делаете выбор сами.
 
 Но в 95% случаев за вас решает 5-летний ребёнок внутри вас, который когда-то испугался.
@@ -858,7 +858,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 6,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/MPUaEVEIAmrfXZJY.png',
+    image: '/public/tornado-images/day_06.png',
     text: `Обычная терапия: учимся жить с тревогой. Говорим о проблеме годами. Работаем с корой мозга.
 
 Гипнотерапия: находим причину тревоги. Убираем за 3–5 сессий. Работаем с бессознательным.
@@ -869,7 +869,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 7,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/DDCNZxFVVibXqpim.png',
+    image: '/public/tornado-images/day_07.png',
     text: `Вы можете получить ещё 10 дипломов, но чувство «я недостаточно хорош» никуда не уйдёт.
 
 Потому что проблема не в знаниях. Проблема в том, что когда-то вам запретили проявляться.
@@ -881,7 +881,7 @@ export const TORNADO_MESSAGES = [
   // ── НЕДЕЛЯ 2: УГЛУБЛЕНИЕ ──────────────────────────────────
   {
     day: 8,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/MNglAKXSQXNdAaxx.png',
+    image: '/public/tornado-images/day_08.png',
     text: `Прокрастинация — это не лень.
 
 Это защитный механизм психики от боли возможного провала. Ваш мозг буквально спасает вас от разочарования, заставляя смотреть сериалы вместо работы.
@@ -892,7 +892,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 9,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/LspOsAgnfyhodzFT.png',
+    image: '/public/tornado-images/day_09.png',
     text: `Синдром «хорошей девочки/мальчика» — это стратегия выживания.
 
 Когда-то вы решили, что любовь нужно заслуживать удобством.
@@ -903,7 +903,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 10,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/NyJVWYcUowPLrXKB.png',
+    image: '/public/tornado-images/day_10.png',
     text: `Можно годами пить обезболивающее, а можно один раз вырезать аппендицит.
 
 Я не буду слушать ваши жалобы годами. Мы найдём корень проблемы, вырвем его и зашьём рану.
@@ -914,7 +914,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 11,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/hPEzNooQRMWJqkNm.png',
+    image: '/public/tornado-images/day_11.png',
     text: `Вы мечтаете о глубоких отношениях, но как только партнёр открывается вам — вы находите в нём миллион недостатков и сбегаете.
 
 Почему? Потому что близость для вашего бессознательного = уязвимость = боль.
@@ -925,7 +925,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 12,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/jlNrzGCXROYichPE.png',
+    image: '/public/tornado-images/day_12.png',
     text: `Вы гордитесь своей рациональностью и холодным умом.
 
 Но правда в том, что вы просто отключили чувства, чтобы не было больно.
@@ -936,7 +936,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 13,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/uUGIYCuQtrAuFWIb.png',
+    image: '/public/tornado-images/day_13.png',
     text: `Вы решаете чужие проблемы, даёте советы, помогаете деньгами. Вы незаменимы.
 
 Но когда плохо вам — вы молчите. Потому что просить о помощи для вас = быть слабым.
@@ -947,7 +947,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 14,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/telYqaAYHqGiDHLv.png',
+    image: '/public/tornado-images/day_14.png',
     text: `Время не лечит. Время просто цементирует ваши травмы, делая их частью вашего характера.
 
 То, что сегодня — лёгкая тревога, через 5 лет станет паническими атаками.
@@ -959,7 +959,7 @@ export const TORNADO_MESSAGES = [
   // ── НЕДЕЛЯ 3: ДОКАЗАТЕЛЬСТВА ──────────────────────────────
   {
     day: 15,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/llRqqSTvXDGnGwue.png',
+    image: '/public/tornado-images/day_15.png',
     text: `Реальный кейс: предприниматель, 3 года на одном уровне дохода.
 
 Проблема: страх масштабирования (бессознательный страх «большие деньги = опасность»).
@@ -970,7 +970,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 16,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/wOLLvbBpLIUPZxUs.png',
+    image: '/public/tornado-images/day_16.png',
     text: `Реальный кейс: 35 лет, череда разрушительных отношений.
 
 Проблема: сценарий «Страх близости» — выбирала холодных партнёров, чтобы подтвердить установку «любви нет».
@@ -981,7 +981,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 17,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/gjfepVkDVuNdSIWF.png',
+    image: '/public/tornado-images/day_17.png',
     text: `Вы думаете, что терапия — это дорого.
 
 Но посчитайте, сколько вы УЖЕ заплатили за свои страхи: слитые проекты, невыгодные контракты, разводы, таблетки от стресса.
@@ -992,7 +992,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 18,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/xTVFqhqPjbAoOptt.png',
+    image: '/public/tornado-images/day_18.png',
     text: `Аффирмации, позитивное мышление, марафоны желаний — всё это работа с корой мозга (5% психики).
 
 А ваши страхи живут в подкорке (95%).
@@ -1003,7 +1003,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 19,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/YHeYmFelukMalVyh.png',
+    image: '/public/tornado-images/day_19.png',
     text: `Психосоматика — это язык, на котором с вами говорит ваше бессознательное, когда вы отказываетесь его слушать.
 
 Ком в горле — невысказанные обиды. Боль в пояснице — страх за будущее. Мигрени — гиперконтроль.
@@ -1014,7 +1014,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 20,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/tmQgmSfMoSGUrANl.png',
+    image: '/public/tornado-images/day_20.png',
     text: `В гипнозе мы часто находим ядро проблемы в возрасте 3–7 лет. Именно тогда формируются базовые сценарии выживания.
 
 Вы выросли, стали умным и сильным, но в стрессовых ситуациях управление перехватывает тот самый ребёнок.
@@ -1025,7 +1025,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 21,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/aqIzWVsQJQBwexnr.png',
+    image: '/public/tornado-images/day_21.png',
     text: `В классической психологии вы платите за время терапевта.
 
 В гипнотерапии вы платите за решение проблемы.
@@ -1037,7 +1037,7 @@ export const TORNADO_MESSAGES = [
   // ── НЕДЕЛЯ 4: ФИНАЛЬНЫЙ УДАР ──────────────────────────────
   {
     day: 22,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/SxRNLExpjNZTccqr.png',
+    image: '/public/tornado-images/day_22.png',
     text: `Вы давно чувствуете, что что-то не так. Вы читаете посты по психологии, ищете ответы.
 
 Ваше бессознательное уже подаёт сигналы: «Пора что-то менять».
@@ -1048,7 +1048,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 23,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/klZdgIAYSpCxYqsr.png',
+    image: '/public/tornado-images/day_23.png',
     text: `У вас есть два пути.
 
 Оставить всё как есть — это гарантия того, что завтра будет таким же, как вчера.
@@ -1059,7 +1059,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 24,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/oTsCcVnsJvSSYpXH.png',
+    image: '/public/tornado-images/day_24.png',
     text: `Мы привыкли терпеть. Терпеть нелюбимую работу, токсичные отношения, постоянную тревогу.
 
 Мы думаем, что «так у всех». Нет, не у всех.
@@ -1070,7 +1070,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 25,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/bgSwnGFhLPkGDmTn.png',
+    image: '/public/tornado-images/day_25.png',
     text: `Деньги могут обесцениться, бизнесы закрыться, партнёры уйти.
 
 Единственное, что останется с вами навсегда — это вы сами.
@@ -1081,7 +1081,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 26,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/YxFMJMhdmcdANWJb.png',
+    image: '/public/tornado-images/day_26.png',
     text: `Вы откладывали решение проблемы месяцами, а может и годами.
 
 Вы говорили себе «потом», «когда будут деньги», «когда будет время».
@@ -1092,7 +1092,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 27,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/rLDUIgQeBicDLZOP.png',
+    image: '/public/tornado-images/day_27.png',
     text: `Гипнотерапия — это ювелирная и энергозатратная работа.
 
 Я не работаю на потоке. Я погружаюсь в каждого клиента на 100%.
@@ -1103,7 +1103,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 28,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/QjATziRbDQnPVDcc.png',
+    image: '/public/tornado-images/day_28.png',
     text: `«Я жалею только об одном — что не пришла к вам 5 лет назад.»
 
 Это самая частая фраза, которую я слышу после окончания терапии.
@@ -1114,7 +1114,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 29,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/cmHPdbHmbRDQQmww.png',
+    image: '/public/tornado-images/day_29.png',
     text: `На диагностике мы не будем просто болтать.
 
 Мы найдём ваш корневой сценарий, поймём, откуда он взялся, и составим чёткий план, как его сломать.
@@ -1125,7 +1125,7 @@ export const TORNADO_MESSAGES = [
   },
   {
     day: 30,
-    image: 'https://files.manuscdn.com/user_upload_by_module/session_file/310519663545788320/SvPNvUZLykkGyson.png',
+    image: '/public/tornado-images/day_30.png',
     text: `Вы дошли до конца этого месяца. Вы прочитали десятки сообщений о том, как работает ваша психика.
 
 Вы узнали в них себя. Теперь у вас нет оправдания «я не знал».
