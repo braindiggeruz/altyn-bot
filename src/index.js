@@ -20,6 +20,9 @@ if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Global bot instance (needed for cron jobs and other functions)
+let globalBot = null;
+
 // FIX: Restrict CORS to known origins
 const allowedOrigins = [
   'https://altyn-bot-production.up.railway.app',
@@ -52,7 +55,7 @@ async function startApp() {
 
     // Init Telegram bot (webhook in production, polling in dev)
     const BOT_TOKEN = process.env.BOT_TOKEN || '8698863140:AAEZE-iDU9T9RkUwmtl00SvVzY0srM1woqw';
-    const bot = initBot(BOT_TOKEN, app);
+    globalBot = initBot(BOT_TOKEN, app);
 
     // API routes
     app.use('/api', adminRouter);
