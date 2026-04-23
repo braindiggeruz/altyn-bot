@@ -116,9 +116,18 @@ export function initBot(token, app) {
 
     if (app) {
       app.post(webhookPath, (req, res) => {
-        bot.processUpdate(req.body);
-        res.sendStatus(200);
+        try {
+          console.log(`📨 [${new Date().toISOString()}] Webhook received update from Telegram`);
+          bot.processUpdate(req.body);
+          res.sendStatus(200);
+        } catch (err) {
+          console.error(`❌ Webhook processUpdate error:`, err.message);
+          res.sendStatus(500);
+        }
       });
+      console.log(`✅ Webhook route registered at POST ${webhookPath}`);
+    } else {
+      console.error('❌ App not provided to initBot! Webhook route NOT registered!');
     }
   } else {
     // ========== POLLING MODE (Local development) ==========
@@ -1165,6 +1174,12 @@ export async function sendBroadcast(broadcastId) {
   return { sent, failed };
 }
 
+// Export bot getter for use in other modules
 export function getBot() {
   return bot;
+}
+
+// Export bot setter for initialization
+export function setBot(botInstance) {
+  bot = botInstance;
 }

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 import { initDatabase } from './database.js';
-import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation } from './bot.js';
+import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation, setBot } from './bot.js';
 import { TORNADO_MESSAGES } from './content.js';
 import adminRouter from './admin-api.js';
 
@@ -20,8 +20,7 @@ if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Global bot instance (needed for cron jobs and other functions)
-let globalBot = null;
+// Global bot instance will be set by initBot()
 
 // FIX: Restrict CORS to known origins
 const allowedOrigins = [
@@ -55,7 +54,9 @@ async function startApp() {
 
     // Init Telegram bot (webhook in production, polling in dev)
     const BOT_TOKEN = process.env.BOT_TOKEN || '8698863140:AAEZE-iDU9T9RkUwmtl00SvVzY0srM1woqw';
-    globalBot = initBot(BOT_TOKEN, app);
+    const botInstance = initBot(BOT_TOKEN, app);
+    // Make sure bot is available globally for cron jobs
+    setBot(botInstance);
 
     // API routes
     app.use('/api', adminRouter);
