@@ -431,7 +431,8 @@ export function initBot(token, app) {
         [chatId]
       );
       await logEvent('tornado_stopped', chatId, {});
-      await bot.answerCallbackQuery(callbackQuery.id);
+      // FIX v4.7.0: was callbackQuery.id (undefined), should be query.id
+      // Note: answerCallbackQuery already called at top of handler, skip duplicate
       await bot.sendMessage(chatId,
         `✅ Поняла. Больше не буду беспокоить.
 
@@ -646,7 +647,7 @@ export function initBot(token, app) {
     }
   });
 
-  console.log('🤖 Altyn Therapy Bot v4.1.0 started');
+  console.log('🤖 Altyn Therapy Bot v4.7.0 started');
   return bot;
 }
 

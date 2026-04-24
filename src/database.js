@@ -243,7 +243,8 @@ export const logEvent = async (type, telegramId, data) => {
 
 // ==================== STATS ====================
 export const getStats = async () => {
-  const r = async (q) => (await pool.query(q)).rows[0]?.count || 0;
+  // FIX v4.7.0: Parse integers to avoid string arithmetic; add missing frontend fields
+  const r = async (q) => parseInt((await pool.query(q)).rows[0]?.count || '0', 10);
   const total = await r('SELECT COUNT(*) as count FROM users');
   const quizCompleted = await r("SELECT COUNT(*) as count FROM users WHERE scenario IS NOT NULL");
   const warmupActive = await r("SELECT COUNT(*) as count FROM users WHERE warmup_active = 1 AND warmup_day > 0");
@@ -265,15 +266,20 @@ export const getStats = async () => {
     ORDER BY date
   `)).rows;
 
-  const conversionRate = total > 0 ? ((booked / total) * 100).toFixed(2) : 0;
+  // FIX v4.7.0: Add missing fields that frontend expects
+  const conversionRate = total > 0 ? ((booked / total) * 100).toFixed(2) : '0.00';
+  const quizCompletionRate = total > 0 ? ((quizCompleted / total) * 100).toFixed(1) : '0.0';
+  const bookingRate = quizCompleted > 0 ? ((booked / quizCompleted) * 100).toFixed(1) : '0.0';
 
   return {
     total, quizCompleted, warmupActive, booked, completed,
-    todayUsers, weekUsers, monthUsers, scenarios, stages, sources, dailyStats, conversionRate
+    todayUsers, weekUsers, monthUsers, scenarios, stages, sources, dailyStats,
+    conversionRate, quizCompletionRate, bookingRate
   };
 };
 
 export const getAllUsers = async (filters = {}) => {
+  // FIX v4.7.0: Support search, booking_status, and configurable limit
   let query = 'SELECT * FROM users WHERE 1=1';
   const params = [];
   let paramIndex = 1;
@@ -290,15 +296,53 @@ export const getAllUsers = async (filters = {}) => {
     query += ` AND warmup_active = $${paramIndex++}`;
     params.push(filters.warmup_active);
   }
+  if (filters.booking_status) {
+    query += ` AND booking_status = $${paramIndex++}`;
+    params.push(filters.booking_status);
+  }
+  if (filters.search) {
+    query += ` AND (first_name ILIKE $${paramIndex} OR last_name ILIKE $${paramIndex} OR username ILIKE $${paramIndex} OR CAST(telegram_id AS TEXT) ILIKE $${paramIndex})`;
+    params.push(`%${filters.search}%`);
+    paramIndex++;
+  }
 
-  query += ' ORDER BY created_at DESC LIMIT 10000';
+  query += ' ORDER BY created_at DESC';
+  const limit = Math.min(parseInt(filters.limit) || 10000, 10000);
+  query += ` LIMIT ${limit}`;
   const result = await pool.query(query, params);
   return result.rows;
 };
 
-export const getUserCount = async () => {
-  const result = await pool.query('SELECT COUNT(*) as count FROM users');
-  return result.rows[0]?.count || 0;
+export const getUserCount = async (filters = {}) => {
+  // FIX v4.7.0: Support filters for accurate user counts
+  let query = 'SELECT COUNT(*) as count FROM users WHERE 1=1';
+  const params = [];
+  let paramIndex = 1;
+
+  if (filters.scenario) {
+    query += ` AND scenario = $${paramIndex++}`;
+    params.push(filters.scenario);
+  }
+  if (filters.funnel_stage) {
+    query += ` AND funnel_stage = $${paramIndex++}`;
+    params.push(filters.funnel_stage);
+  }
+  if (filters.warmup_active !== undefined) {
+    query += ` AND warmup_active = $${paramIndex++}`;
+    params.push(filters.warmup_active);
+  }
+  if (filters.booking_status) {
+    query += ` AND booking_status = $${paramIndex++}`;
+    params.push(filters.booking_status);
+  }
+  if (filters.search) {
+    query += ` AND (first_name ILIKE $${paramIndex} OR last_name ILIKE $${paramIndex} OR username ILIKE $${paramIndex} OR CAST(telegram_id AS TEXT) ILIKE $${paramIndex})`;
+    params.push(`%${filters.search}%`);
+    paramIndex++;
+  }
+
+  const result = await pool.query(query, params);
+  return parseInt(result.rows[0]?.count || '0', 10);
 };
 
 // ==================== BROADCAST OPERATIONS ====================
@@ -329,83 +373,156 @@ export const getBroadcastUsers = async (segment) => {
   return result.rows.map(r => r.telegram_id);
 };
 
-// ==================== ADMIN PANEL FUNCTIONS (STUBS) ====================
-// These are placeholder functions for admin panel compatibility
-// They can be implemented later if needed
+// ==================== ADMIN PANEL FUNCTIONS (FIX v4.7.0: Real SQL implementations) ====================
 
 export const createBroadcast = async (data) => {
-  // Stub: create broadcast
-  return { id: Date.now(), ...data };
+  const result = await pool.query(
+    `INSERT INTO broadcasts (title, content, image_url, buttons, segment, status, ab_variant, ab_group_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [data.title, data.content, data.image_url || null, data.buttons ? JSON.stringify(data.buttons) : null,
+     data.segment || 'all', data.status || 'draft', data.ab_variant || null, data.ab_group_id || 0]
+  );
+  return result.rows[0].id;
 };
 
 export const getBroadcasts = async () => {
-  // Stub: get all broadcasts
-  return [];
+  const result = await pool.query('SELECT * FROM broadcasts ORDER BY created_at DESC LIMIT 100');
+  return result.rows;
 };
 
 export const getReferralStats = async () => {
-  // Stub: get referral statistics
-  return { total: 0, active: 0 };
+  const totalResult = await pool.query('SELECT COUNT(*) as count FROM referrals');
+  const activeResult = await pool.query("SELECT COUNT(*) as count FROM referrals WHERE status = 'active'");
+  const topReferrers = await pool.query(`
+    SELECT referrer_telegram_id, COUNT(*) as count,
+           (SELECT first_name FROM users WHERE telegram_id = referrer_telegram_id) as name,
+           (SELECT username FROM users WHERE telegram_id = referrer_telegram_id) as username
+    FROM referrals
+    GROUP BY referrer_telegram_id
+    ORDER BY count DESC
+    LIMIT 20
+  `);
+  return {
+    total: parseInt(totalResult.rows[0]?.count || '0', 10),
+    active: parseInt(activeResult.rows[0]?.count || '0', 10),
+    topReferrers: topReferrers.rows
+  };
 };
 
-export const getReferralCount = async () => {
-  // Stub: get referral count
-  return 0;
+export const getReferralCount = async (telegramId) => {
+  const result = await pool.query(
+    'SELECT COUNT(*) as count FROM referrals WHERE referrer_telegram_id = $1',
+    [telegramId]
+  );
+  return parseInt(result.rows[0]?.count || '0', 10);
 };
 
 export const getTemplates = async () => {
-  // Stub: get message templates
-  return [];
+  const result = await pool.query('SELECT * FROM broadcast_templates ORDER BY created_at DESC');
+  return result.rows;
 };
 
 export const createTemplate = async (data) => {
-  // Stub: create template
-  return { id: Date.now(), ...data };
+  const result = await pool.query(
+    `INSERT INTO broadcast_templates (name, content, image_url, buttons, segment, category)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [data.name, data.content, data.image_url || null, data.buttons ? JSON.stringify(data.buttons) : null,
+     data.segment || 'all', data.category || 'general']
+  );
+  return result.rows[0].id;
 };
 
 export const deleteTemplate = async (id) => {
-  // Stub: delete template
+  await pool.query('DELETE FROM broadcast_templates WHERE id = $1', [id]);
   return true;
 };
 
 export const getUtmLinks = async () => {
-  // Stub: get UTM links
-  return [];
+  const result = await pool.query('SELECT * FROM utm_links ORDER BY created_at DESC');
+  return result.rows;
 };
 
 export const createUtmLink = async (data) => {
-  // Stub: create UTM link
-  return { id: Date.now(), ...data };
+  const botUsername = 'altyntherapybot';
+  const params = [data.source, data.medium, data.campaign].filter(Boolean).join('_');
+  const fullLink = `https://t.me/${botUsername}?start=${params}`;
+  const result = await pool.query(
+    `INSERT INTO utm_links (name, source, medium, campaign, full_link)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [data.name, data.source, data.medium || null, data.campaign || null, fullLink]
+  );
+  return result.rows[0];
 };
 
 export const deleteUtmLink = async (id) => {
-  // Stub: delete UTM link
+  await pool.query('DELETE FROM utm_links WHERE id = $1', [id]);
   return true;
 };
 
 export const getUserTasks = async (userId) => {
-  // Stub: get user tasks
-  return [];
+  const result = await pool.query(
+    'SELECT * FROM user_tasks WHERE user_telegram_id = $1 ORDER BY created_at DESC',
+    [userId]
+  );
+  return result.rows;
 };
 
 export const createUserTask = async (data) => {
-  // Stub: create user task
-  return { id: Date.now(), ...data };
+  const result = await pool.query(
+    `INSERT INTO user_tasks (user_telegram_id, title, description, status, due_date)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [data.user_telegram_id, data.title, data.description || null, data.status || 'pending', data.due_date || null]
+  );
+  return result.rows[0].id;
 };
 
 export const updateUserTask = async (id, fields) => {
-  // Stub: update user task
+  const keys = Object.keys(fields);
+  if (keys.length === 0) return true;
+  const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+  const values = keys.map(k => fields[k]);
+  values.push(id);
+  await pool.query(`UPDATE user_tasks SET ${sets} WHERE id = $${values.length}`, values);
   return true;
 };
 
 export const getCohortData = async () => {
-  // Stub: get cohort data
-  return [];
+  const result = await pool.query(`
+    SELECT
+      DATE_TRUNC('week', created_at)::date as cohort_week,
+      COUNT(*) as total,
+      SUM(CASE WHEN scenario IS NOT NULL THEN 1 ELSE 0 END) as quiz_completed,
+      SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked,
+      ROUND(CAST(SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100, 1) as conversion_rate
+    FROM users
+    WHERE created_at >= NOW() - INTERVAL '12 weeks'
+    GROUP BY cohort_week
+    ORDER BY cohort_week DESC
+  `);
+  return result.rows;
 };
 
 export const getUsersForExport = async (filters = {}) => {
-  // Stub: get users for export
-  return [];
+  let query = 'SELECT * FROM users WHERE 1=1';
+  const params = [];
+  let paramIndex = 1;
+
+  if (filters.scenario) {
+    query += ` AND scenario = $${paramIndex++}`;
+    params.push(filters.scenario);
+  }
+  if (filters.funnel_stage) {
+    query += ` AND funnel_stage = $${paramIndex++}`;
+    params.push(filters.funnel_stage);
+  }
+  if (filters.booking_status) {
+    query += ` AND booking_status = $${paramIndex++}`;
+    params.push(filters.booking_status);
+  }
+
+  query += ' ORDER BY created_at DESC';
+  const result = await pool.query(query, params);
+  return result.rows;
 };
 
 export const trackReferral = async (referrerId, referredId) => {

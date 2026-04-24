@@ -17,7 +17,8 @@ import {
 import { sendBroadcast } from './bot.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'altyn_jwt_' + Math.random().toString(36).slice(2) + '_2024_secure';
+// FIX v4.7.0: Use stable fallback secret instead of random (tokens survive restarts)
+const JWT_SECRET = process.env.JWT_SECRET || 'altyn_jwt_stable_secret_2024_production_key';
 
 // Apply security headers
 router.use(helmet({ contentSecurityPolicy: false }));
