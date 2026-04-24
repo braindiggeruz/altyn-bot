@@ -44,6 +44,8 @@ export async function initDatabase() {
     // FIX v4.7.0: Add ALL potentially missing columns to users table
     // This ensures the schema matches regardless of when the table was originally created
     const migrations = [
+      // CRITICAL: telegram_id must exist - it's the primary lookup key
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id BIGINT UNIQUE`,
       // Core user fields
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`,
