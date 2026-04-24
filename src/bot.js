@@ -41,8 +41,12 @@ export async function notifyAdmin(text, options = {}) {
     if (global.__addError) global.__addError('notifyAdmin', 'bot not initialized', '');
     return { ok: false, reason: 'bot_not_ready' };
   }
-  const raw = [GROUP_ID, OWNER_ID].filter(Boolean);
-  const targets = [...new Set(raw.map(coerceTarget).filter(Boolean))];
+  // v4.8.3: Group-only routing. Owner ID is NOT a target by default — it caused
+  // duplicate "new user / hot lead" notifications to land in the owner's PRIVATE
+  // chat with the bot, where the user could literally see them next to their own
+  // /start. Only fall back to OWNER_ID if GROUP_ID is unset.
+  const primary = GROUP_ID ? [GROUP_ID] : (OWNER_ID ? [OWNER_ID] : []);
+  const targets = [...new Set(primary.map(coerceTarget).filter(Boolean))];
   if (targets.length === 0) {
     console.warn('⚠️ notifyAdmin: no targets configured (NOTIFY_GROUP_ID / OWNER_TELEGRAM_ID)');
     if (global.__addError) global.__addError('notifyAdmin', 'no targets configured', '');
