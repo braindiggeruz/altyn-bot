@@ -1397,36 +1397,40 @@ export async function sendBroadcast(broadcastId) {
   } catch(e) {}
 
   for (const u of users) {
-    try {
-      const keyboard = buttons && buttons.length > 0 ? {
-        inline_keyboard: buttons.map(b => [{
-          text: b.text,
-          ...(b.url ? { url: b.url } : { callback_data: b.callback || 'book_diagnostic' })
-        }])
-      } : {
-        inline_keyboard: [
-          [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
-        ]
-      };
+    const tid = u.telegram_id;
+    if (!tid) { failed++; continue; }
 
-      if (broadcast.image_url) {
-        await bot.sendPhoto(u.telegram_id, broadcast.image_url, {
-          caption: broadcast.content,
-          parse_mode: 'Markdown',
-          reply_markup: keyboard
-        });
-      } else {
-        await bot.sendMessage(u.telegram_id, broadcast.content, {
-          parse_mode: 'Markdown',
-          reply_markup: keyboard
-        });
-      }
-      sent++;
-    } catch (err) {
-      failed++;
-      await handleBlockedUser(u.telegram_id, err);
+    const keyboard = buttons && buttons.length > 0 ? {
+      inline_keyboard: buttons.map(b => [{
+        text: b.text,
+        ...(b.url ? { url: b.url } : { callback_data: b.callback || 'book_diagnostic' })
+      }])
+    } : {
+      inline_keyboard: [
+        [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
+      ]
+    };
+
+    // Use sendSafe for rate-limit protection + retry on 429
+    // Skip parse_mode for user-generated broadcast content to avoid Markdown parse errors
+    let sendRes;
+    if (broadcast.image_url) {
+      sendRes = await sendSafe('sendPhoto', tid, broadcast.image_url, {
+        caption: broadcast.content,
+        reply_markup: keyboard
+      });
+    } else {
+      sendRes = await sendSafe('sendMessage', tid, broadcast.content, {
+        reply_markup: keyboard
+      });
     }
-    await new Promise(r => setTimeout(r, 50));
+
+    if (sendRes.ok) {
+      sent++;
+    } else {
+      failed++;
+    }
+    await sleep(120);
   }
 
   await updateBroadcast(broadcastId, {
@@ -1436,6 +1440,7 @@ export async function sendBroadcast(broadcastId) {
     sent_at: new Date().toISOString()
   });
   await logEvent('broadcast_sent', null, { id: broadcastId, sent, failed });
+  console.log(`📤 BROADCAST #${broadcastId} done: sent=${sent}, failed=${failed}`);
   return { sent, failed };
 }
 

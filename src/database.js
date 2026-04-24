@@ -465,13 +465,13 @@ export const updateBroadcast = async (id, fields) => {
 export const getBroadcastUsers = async (segment) => {
   if (segment === 'all') {
     const result = await pool.query('SELECT telegram_id FROM users WHERE warmup_active = 1');
-    return result.rows.map(r => r.telegram_id);
+    return result.rows;
   }
   const result = await pool.query(
     'SELECT telegram_id FROM users WHERE warmup_active = 1 AND scenario = $1',
     [segment]
   );
-  return result.rows.map(r => r.telegram_id);
+  return result.rows;
 };
 
 // ==================== ADMIN PANEL FUNCTIONS (FIX v4.7.0: Real SQL implementations) ====================
