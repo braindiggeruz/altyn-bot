@@ -99,8 +99,8 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
     const stats = await getStats();
     res.json(stats);
   } catch (err) {
-    console.error('Dashboard error:', err.message);
-    res.status(500).json({ error: 'Failed to load dashboard' });
+    console.error('Dashboard error:', err.message, err.stack);
+    res.status(500).json({ error: 'Failed to load dashboard', detail: err.message });
   }
 });
 
