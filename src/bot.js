@@ -773,7 +773,8 @@ export async function sendWarmupMessages() {
       await updateUser(user.telegram_id, { warmup_active: 0 }, true);
       continue;
     }
-    if (!user.scenario && user.funnel_stage !== 'quiz_completed') continue;
+    // FIX v4.7.0: User must have completed quiz to get warmup messages
+    if (user.funnel_stage !== 'quiz_completed') continue;
 
     const nextDay = (user.warmup_day || 0) + 1;
     const scenario = user.scenario;
