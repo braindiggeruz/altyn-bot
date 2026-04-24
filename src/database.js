@@ -241,7 +241,8 @@ export const updateUser = async (telegramId, fields, skipLastActive = false) => 
   // FIX v4.2.0: Only update 'updated_at' for significant funnel changes
   // FIX v4.5.0: Skip last_active update when skipLastActive=true (for bot-initiated messages)
   // FIX v4.6.0: Prevent duplicate column names in SET clause
-  const significantFields = ['funnel_stage', 'scenario', 'booking_status', 'quiz_answers'];
+  // FIX v4.7.1: Added warmup_day + booking_name so updated_at tracks warmup progress and booking flow
+  const significantFields = ['funnel_stage', 'scenario', 'booking_status', 'quiz_answers', 'warmup_day', 'booking_name'];
   const hasSignificantChange = keys.some(k => significantFields.includes(k));
   
   let updateClause = sets;

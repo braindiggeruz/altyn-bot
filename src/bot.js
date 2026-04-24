@@ -981,15 +981,15 @@ export async function sendReminders() {
   }
 
   // 6. Reactivation: users who completed quiz but never booked, inactive 7+ days
-  // FIX v4.2.0: Removed warmup_active = 0 condition that was blocking reactivation
-  // Reactivation should trigger for users who haven't booked, regardless of warmup status
+  // FIX v4.7.1: Wider reactivation window (7-30 days) + dedup via reactivation_sent_at
   const reactivationResult = await pool.query(`
     SELECT * FROM users
     WHERE funnel_stage = 'quiz_completed'
     AND (booking_status IS NULL OR booking_status = 'none')
     AND exit_reason IS NULL
     AND last_active <= NOW() - INTERVAL '7 days'
-    AND last_active >= NOW() - INTERVAL '8 days'
+    AND last_active >= NOW() - INTERVAL '30 days'
+    AND (reactivation_sent_at IS NULL)
   `);
 
   for (const user of reactivationResult.rows) {
@@ -1012,6 +1012,7 @@ export async function sendReminders() {
         }
       );
       await updateUser(user.telegram_id, { warmup_active: 1, warmup_day: 7 }, true);
+      await pool.query('UPDATE users SET reactivation_sent_at = NOW() WHERE telegram_id = $1', [user.telegram_id]);
       await logEvent('reactivation_sent', user.telegram_id, { scenario, days_inactive: 7 });
     } catch (err) {
       await handleBlockedUser(user.telegram_id, err);
@@ -1095,7 +1096,10 @@ export async function sendTornadoReactivation(botInstance, dbPool) {
 
     try {
       // Отправляем картинку с текстом
-      await b.sendPhoto(user.telegram_id, msg.image, {
+      // FIX v4.7.1: Resolve image path relative to project root
+      const imgPath = path.resolve(__dirname, '..', msg.image.replace(/^\//, ''));
+      const photo = fs.existsSync(imgPath) ? imgPath : msg.image;
+      await b.sendPhoto(user.telegram_id, photo, {
         caption: msg.text,
         parse_mode: 'Markdown',
         reply_markup: {
