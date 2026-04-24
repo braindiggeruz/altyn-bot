@@ -24,6 +24,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OWNER_ID = process.env.OWNER_TELEGRAM_ID || null;
 const GROUP_ID = process.env.NOTIFY_GROUP_ID || null;
 
+// v4.9.0: Escape Telegram Markdown (legacy mode) special characters in user-supplied text.
+// Without this, a single `_` in a username or `*` in booking_request breaks the entire
+// notifyAdmin message (logged as ETELEGRAM 400 "can't parse entities"), and the lead
+// notification silently never reaches the admin group.
+function escapeMd(text) {
+  if (text === null || text === undefined) return '';
+  return String(text).replace(/([_*`\[\]])/g, '\\$1');
+}
+
 // Telegram supergroup ids start with -100 and MUST be passed as numbers, not strings,
 // to node-telegram-bot-api. We coerce explicitly here so a misconfigured env var
 // ("-1003406252597") still works.
@@ -310,7 +319,7 @@ export function initBot(token, app) {
         const referrer = await getUser(parseInt(referrerId));
         if (referrer) {
           const newName = msg.from.first_name || 'Кто-то';
-          bot.sendMessage(referrer.telegram_id, REFERRAL_NOTIFY(referrer.first_name, newName), {
+          bot.sendMessage(referrer.telegram_id, REFERRAL_NOTIFY(escapeMd(referrer.first_name || 'друг'), escapeMd(newName)), {
             parse_mode: 'Markdown'
           }).catch(() => {});
         }
@@ -319,39 +328,46 @@ export function initBot(token, app) {
       }
     }
 
-    // Send welcome image + text
+    // v4.9.0: Bullet-proof welcome delivery. Photo is optional decoration; the
+    // "Пройти тест" button MUST always reach the user, otherwise the funnel
+    // dies at step zero. We try photo first; on any failure (size, network,
+    // markdown caption issue) we fall through to plain text + button.
+    const welcomeKeyboard = {
+      inline_keyboard: [[
+        { text: '🔮 Пройти тест', callback_data: 'quiz_start' }
+      ]]
+    };
+    let welcomeDelivered = false;
     try {
       const imgPath = path.resolve(__dirname, '..', 'assets', 'welcome.png');
       if (fs.existsSync(imgPath)) {
-        await bot.sendPhoto(chatId, imgPath, {
-          caption: WELCOME_TEXT,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '🔮 Пройти тест', callback_data: 'quiz_start' }
-            ]]
-          }
-        });
-      } else {
-        await bot.sendMessage(chatId, WELCOME_TEXT, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '🔮 Пройти тест', callback_data: 'quiz_start' }
-            ]]
-          }
-        });
+        try {
+          await bot.sendPhoto(chatId, imgPath, {
+            caption: WELCOME_TEXT,
+            parse_mode: 'Markdown',
+            reply_markup: welcomeKeyboard
+          });
+          welcomeDelivered = true;
+        } catch (photoErr) {
+          console.error(`Welcome photo failed for ${chatId}, falling back to text:`, photoErr.message);
+        }
       }
     } catch (err) {
-      console.error('Error sending welcome:', err.message);
-      await bot.sendMessage(chatId, WELCOME_TEXT, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '🔮 Пройти тест', callback_data: 'quiz_start' }
-          ]]
-        }
-      });
+      console.error('Welcome image path error:', err.message);
+    }
+    if (!welcomeDelivered) {
+      try {
+        await bot.sendMessage(chatId, WELCOME_TEXT, {
+          parse_mode: 'Markdown',
+          reply_markup: welcomeKeyboard
+        });
+      } catch (mdErr) {
+        // Last-resort: drop markdown entirely so the user at least sees the button
+        console.error(`Welcome markdown failed for ${chatId}, sending plain:`, mdErr.message);
+        await bot.sendMessage(chatId, WELCOME_TEXT.replace(/[*_`]/g, ''), {
+          reply_markup: welcomeKeyboard
+        });
+      }
     }
 
     await logMessage(chatId, 'out', 'welcome', 'Welcome message sent');
@@ -360,7 +376,7 @@ export function initBot(token, app) {
     const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
     const uname = msg.from.username ? `@${msg.from.username}` : 'нет username';
     notifyAdmin(
-      `🆕 *Новый пользователь!*\n\n👤 ${name}\n📱 ${uname}\n🆔 \`${chatId}\`\n📊 Источник: ${source}${referrerId ? `\n🔗 Реферал от: ${referrerId}` : ''}`
+      `🆕 *Новый пользователь!*\n\n👤 ${escapeMd(name)}\n📱 ${escapeMd(uname)}\n🆔 \`${chatId}\`\n📊 Источник: ${escapeMd(source)}${referrerId ? `\n🔗 Реферал от: ${escapeMd(referrerId)}` : ''}`
     );
    } catch (fatalErr) {
     console.error(`❌ FATAL /start error for ${msg?.chat?.id}:`, fatalErr.message, fatalErr.stack);
@@ -479,7 +495,7 @@ export function initBot(token, app) {
       });
       await removeKeyboard(chatId, messageId);
       const name = user?.first_name || '';
-      await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${name}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
+      await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
         parse_mode: 'Markdown'
       });
       await logEvent('booking_start', chatId, {});
@@ -494,7 +510,7 @@ export function initBot(token, app) {
       if (!user.booking_name) {
         await bot.sendMessage(chatId, '📝 Как вас зовут? (Имя и фамилия)', { parse_mode: 'Markdown' });
       } else if (!user.booking_request) {
-        await bot.sendMessage(chatId, `✍️ *${user.booking_name}*, опишите кратко ваш запрос — с чем хотите поработать?`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `✍️ *${escapeMd(user.booking_name)}*, опишите кратко ваш запрос — с чем хотите поработать?`, { parse_mode: 'Markdown' });
       } else if (!user.booking_time) {
         await bot.sendMessage(chatId, '📅 Когда вам удобно? Напишите желаемую дату и время', { parse_mode: 'Markdown' });
       }
@@ -620,7 +636,7 @@ export function initBot(token, app) {
         await updateUser(chatId, { booking_name: nameInput });
         await logMessage(chatId, 'in', 'booking_name', msg.text);
         await sendTyping(chatId, 500);
-        await bot.sendMessage(chatId, `✍️ Приятно познакомиться, *${nameInput}*!\n\nОпишите кратко ваш запрос — с чем хотите поработать?`, {
+        await bot.sendMessage(chatId, `✍️ Приятно познакомиться, *${escapeMd(nameInput)}*!\n\nОпишите кратко ваш запрос — с чем хотите поработать?`, {
           parse_mode: 'Markdown'
         });
         return;
@@ -649,7 +665,7 @@ export function initBot(token, app) {
         await logMessage(chatId, 'in', 'booking_time', msg.text);
         await logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
         await sendTyping(chatId, 1000);
-        await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(name), {
+        await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(escapeMd(name)), {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -665,14 +681,14 @@ export function initBot(token, app) {
         const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
         const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
         const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
-          `👤 *Имя:* ${updatedUser.booking_name}\n` +
-          `📱 *Telegram:* ${uname}\n` +
+          `👤 *Имя:* ${escapeMd(updatedUser.booking_name)}\n` +
+          `📱 *Telegram:* ${escapeMd(uname)}\n` +
           `🆔 *ID:* \`${chatId}\`\n` +
-          `🎭 *Сценарий:* ${scenarioTitle}\n` +
-          `📝 *Запрос:* ${updatedUser.booking_request}\n` +
-          `📅 *Время:* ${msg.text}\n` +
-          `📊 *Источник:* ${updatedUser.source || 'organic'}\n` +
-          `${updatedUser.utm_campaign ? `📎 *Кампания:* ${updatedUser.utm_campaign}\n` : ''}` +
+          `🎭 *Сценарий:* ${escapeMd(scenarioTitle)}\n` +
+          `📝 *Запрос:* ${escapeMd(updatedUser.booking_request)}\n` +
+          `📅 *Время:* ${escapeMd(msg.text)}\n` +
+          `📊 *Источник:* ${escapeMd(updatedUser.source || 'organic')}\n` +
+          `${updatedUser.utm_campaign ? `📎 *Кампания:* ${escapeMd(updatedUser.utm_campaign)}\n` : ''}` +
           `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
           `📞 Написать: tg://user?id=${chatId}`;
 
@@ -732,7 +748,7 @@ export function initBot(token, app) {
     });
     const user = await getUser(chatId);
     const name = user?.first_name || '';
-    await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${name}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
+    await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
       parse_mode: 'Markdown'
     });
   });
@@ -818,21 +834,36 @@ async function sendQuizResult(chatId, answers) {
   await logEvent('quiz_completed', chatId, { scenario, scores });
   await logMessage(chatId, 'out', 'quiz_result', scenario);
 
-  // Send result image
+  // v4.9.0: Bullet-proof result delivery — multi-stage fallback so the user
+  // ALWAYS sees their result, even if the image is missing, the photo upload
+  // times out, the caption is too long, or markdown parsing fails.
+  // Telegram caption limit is 1024 chars — sending the full result.text as a
+  // caption silently truncates and may break parse_mode.
   try {
     const imgKey = result.image || scenario;
     const imgPath = path.resolve(__dirname, '..', 'assets', `result_${imgKey}.png`);
+    let imageSent = false;
     if (fs.existsSync(imgPath)) {
-      await bot.sendPhoto(chatId, imgPath, {
-        caption: result.text,
-        parse_mode: 'Markdown'
-      });
-    } else {
+      try {
+        await bot.sendPhoto(chatId, imgPath, { caption: result.title || '' });
+        imageSent = true;
+      } catch (photoErr) {
+        console.error(`sendPhoto failed for ${chatId}, falling back to text-only:`, photoErr.message);
+      }
+    }
+    // Always send the full text as a separate message so result.text is never lost.
+    try {
       await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
+    } catch (mdErr) {
+      console.error(`sendMessage(Markdown) failed for ${chatId}, retrying plain:`, mdErr.message);
+      await bot.sendMessage(chatId, result.text);
     }
   } catch (err) {
-    console.error('Error sending result image:', err.message);
-    await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
+    console.error('Error sending result image+text:', err.message);
+    if (global.__addError) global.__addError('quiz_result', err.message, err.stack);
+    try {
+      await bot.sendMessage(chatId, result.text);
+    } catch(e) {}
   }
 
   // Send CTA after result
@@ -860,10 +891,10 @@ async function sendQuizResult(chatId, answers) {
 
   notifyAdmin(
     `🧠 *Новый лид прошёл квиз!*\n\n` +
-    `👤 *Имя:* ${user?.first_name || 'Аноним'} ${user?.last_name || ''}`.trim() + `\n` +
-    `📱 *Telegram:* ${uname}\n` +
+    `👤 *Имя:* ${escapeMd(user?.first_name || 'Аноним')} ${escapeMd(user?.last_name || '')}`.trim() + `\n` +
+    `📱 *Telegram:* ${escapeMd(uname)}\n` +
     `🆔 *ID:* \`${chatId}\`\n` +
-    `${scenarioEmoji} *Сценарий:* ${scenarioTitle}\n` +
+    `${scenarioEmoji} *Сценарий:* ${escapeMd(scenarioTitle)}\n` +
     `📊 *Баллы:* ${scoreStr}\n` +
     `📅 *Время:* ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Almaty' })}\n\n` +
     `💡 _Человек видит результат и кнопку записи прямо сейчас!_`,
@@ -1090,7 +1121,7 @@ export async function sendReminders() {
       AND last_booking_reminder_30m_at IS NULL
     `,
     build: async (user) => ({
-      text: BOOKING_REMINDER_30MIN(user.booking_name || user.first_name || 'друг'),
+      text: BOOKING_REMINDER_30MIN(escapeMd(user.booking_name || user.first_name || 'друг')),
       options: {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -1144,8 +1175,8 @@ export async function sendReminders() {
       AND last_session_reminder_at IS NULL
     `,
     build: async (user) => {
-      const name = user.booking_name || user.first_name || 'друг';
-      const time = user.booking_time || 'запланированное время';
+      const name = escapeMd(user.booking_name || user.first_name || 'друг');
+      const time = escapeMd(user.booking_time || 'запланированное время');
       return {
         text: `🔔 *Напоминание о диагностике*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nДиагностика пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите в WhatsApp, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
         options: {
@@ -1172,7 +1203,7 @@ export async function sendReminders() {
       AND reactivation_sent_at IS NULL
     `,
     build: async (user) => {
-      const name = user.first_name || 'друг';
+      const name = escapeMd(user.first_name || 'друг');
       const scenario = user.scenario || 'freeze';
       const scenarioEmoji = { savior: '🛡', fear: '💔', control: '🎯', freeze: '❄️' }[scenario] || '🎭';
       const scenarioNames = { savior: 'Спасатель', fear: 'Страх близости', control: 'Гиперконтроль', freeze: 'Заморозка' };
@@ -1202,7 +1233,7 @@ export async function sendReminders() {
     AND session_completed_at >= NOW() - INTERVAL '14 days'
   `);
   for (const user of postSessionResult.rows) {
-    const name = user.booking_name || user.first_name || 'друг';
+    const name = escapeMd(user.booking_name || user.first_name || 'друг');
     const sendRes = await sendSafe('sendMessage', user.telegram_id,
       `🌟 *${name}, как прошла диагностика?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса. Это уже результат.\n\n*Что заметили клиенты после диагностики:*\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже и менять ситуацию\n\n*Следующий шаг:*\nПолная программа гипнотерапии (8 сессий) даёт *устойчивый результат*. Многие клиенты видят изменения уже после 3-4 сессий.\n\n💰 *Цена:* 50,000 тенге за программу (или 7,000 за сессию)\n⏱️ *Длительность:* 1 месяц (2 сессии в неделю)\n✅ *Гарантия:* Если не почувствуете результат — вернём 50% стоимости\n\n_Напишите мне — обсудим ваш путь._`,
       {
