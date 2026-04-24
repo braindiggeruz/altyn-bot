@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   getUser, createUser, updateUser, logMessage, logEvent,
-  getAllUsers, getScheduledBroadcasts, updateBroadcast,
+  getAllUsers, getUsersDueForWarmup, getScheduledBroadcasts, updateBroadcast,
   getBroadcastUsers, pool
 } from './database.js';
 import {
@@ -39,6 +39,65 @@ async function notifyAdmin(text, options = {}) {
 }
 
 let bot;
+
+// ============================================================
+// v4.8.0: PRODUCTION HARDENING HELPERS
+// ============================================================
+
+// Concurrency guard: prevent the same cron task from running twice in parallel
+// (e.g. if a previous run is still flushing messages when the next tick fires).
+const _cronLocks = new Map();
+export function runOnce(name, fn) {
+  if (_cronLocks.get(name)) {
+    console.log(`⏳ [${name}] previous run still in progress, skipping this tick`);
+    return Promise.resolve({ skipped: true });
+  }
+  _cronLocks.set(name, true);
+  const start = Date.now();
+  return Promise.resolve()
+    .then(fn)
+    .catch((err) => {
+      console.error(`❌ [${name}] failed:`, err.message, err.stack);
+      if (global.__addError) global.__addError(name, err.message, err.stack);
+    })
+    .finally(() => {
+      _cronLocks.delete(name);
+      console.log(`🕒 [${name}] finished in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+    });
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Telegram-friendly send wrapper: retries on 429 (Too Many Requests) using
+// `retry_after`, marks 403 (blocked) users for warmup deactivation, and never
+// throws — returns { ok, error } for callers that need to know success/failure.
+async function sendSafe(method, chatId, ...args) {
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await bot[method](chatId, ...args);
+      return { ok: true, result: res };
+    } catch (err) {
+      lastErr = err;
+      const code = err?.response?.statusCode || err?.code;
+      const retryAfter = err?.response?.body?.parameters?.retry_after;
+      if (code === 429 && retryAfter) {
+        const waitMs = (retryAfter + 1) * 1000;
+        console.log(`⏳ Telegram 429 for ${chatId}, sleeping ${waitMs}ms (attempt ${attempt + 1})`);
+        await sleep(waitMs);
+        continue;
+      }
+      if (code === 403 || (typeof err.message === 'string' && err.message.includes('403'))) {
+        await handleBlockedUser(chatId, err);
+        return { ok: false, error: 'blocked' };
+      }
+      // Other errors (400 for bad markdown, network, etc.) — don't retry blindly
+      console.error(`sendSafe ${method} → ${chatId} failed:`, err.message);
+      return { ok: false, error: err.message };
+    }
+  }
+  return { ok: false, error: lastErr?.message || 'unknown' };
+}
 
 // ============================================================
 // HELPER: Progress bar for quiz
@@ -287,7 +346,11 @@ export function initBot(token, app) {
     // ---- Quiz start ----
     if (data === 'quiz_start') {
       await logEvent('quiz_start', chatId, {});
-      await updateUser(chatId, { funnel_stage: 'quiz', quiz_answers: JSON.stringify([]) });
+      await updateUser(chatId, {
+        funnel_stage: 'quiz',
+        quiz_answers: JSON.stringify([]),
+        quiz_started_at: new Date().toISOString()
+      });
       await removeKeyboard(chatId, messageId);
       await sendTyping(chatId, 500);
       await sendQuizQuestion(chatId, 0);
@@ -344,7 +407,11 @@ export function initBot(token, app) {
 
     // ---- Restart quiz ----
     if (data === 'restart_quiz') {
-      await updateUser(chatId, { funnel_stage: 'quiz', quiz_answers: JSON.stringify([]) });
+      await updateUser(chatId, {
+        funnel_stage: 'quiz',
+        quiz_answers: JSON.stringify([]),
+        quiz_started_at: new Date().toISOString()
+      });
       await removeKeyboard(chatId, messageId);
       await sendQuizQuestion(chatId, 0);
       return;
@@ -367,7 +434,8 @@ export function initBot(token, app) {
         funnel_stage: 'booking',
         booking_name: null,
         booking_request: null,
-        booking_time: null
+        booking_time: null,
+        booking_started_at: new Date().toISOString()
       });
       await removeKeyboard(chatId, messageId);
       const name = user?.first_name || '';
@@ -411,9 +479,11 @@ export function initBot(token, app) {
     // ---- Confirm booking (admin) ----
     if (data.startsWith('confirm_booking_')) {
       const targetId = parseInt(data.replace('confirm_booking_', ''));
-      await updateUser(targetId, { 
+      // FIX v4.8.0: Don't set session_completed_at on confirm — that timestamp is for AFTER
+      // the actual session ends. Use booking_confirmed_at to track confirmation.
+      await updateUser(targetId, {
         booking_status: 'confirmed',
-        session_completed_at: new Date().toISOString()
+        booking_confirmed_at: new Date().toISOString()
       }, true);
       try {
         await bot.sendMessage(targetId, '✅ *Ваша запись подтверждена!*\n\nАлтын свяжется с вами в ближайшее время. Ожидайте сообщение!', {
@@ -603,7 +673,11 @@ export function initBot(token, app) {
 
   bot.onText(/\/quiz/, async (msg) => {
     const chatId = msg.chat.id;
-    await updateUser(chatId, { funnel_stage: 'quiz', quiz_answers: JSON.stringify([]) });
+    await updateUser(chatId, {
+      funnel_stage: 'quiz',
+      quiz_answers: JSON.stringify([]),
+      quiz_started_at: new Date().toISOString()
+    });
     await sendQuizQuestion(chatId, 0);
   });
 
@@ -613,7 +687,8 @@ export function initBot(token, app) {
       funnel_stage: 'booking',
       booking_name: null,
       booking_request: null,
-      booking_time: null
+      booking_time: null,
+      booking_started_at: new Date().toISOString()
     });
     const user = await getUser(chatId);
     const name = user?.first_name || '';
@@ -647,7 +722,7 @@ export function initBot(token, app) {
     }
   });
 
-  console.log('🤖 Altyn Therapy Bot v4.7.0 started');
+  console.log('🤖 Altyn Therapy Bot v4.8.0 started');
   return bot;
 }
 
@@ -696,7 +771,9 @@ async function sendQuizResult(chatId, answers) {
     quiz_score: JSON.stringify(scores),
     funnel_stage: 'quiz_completed',
     warmup_active: 1,
-    warmup_day: 0
+    warmup_day: 0,
+    quiz_completed_at: new Date().toISOString(),
+    last_warmup_sent_at: null
   });
   await logEvent('quiz_completed', chatId, { scenario, scores });
   await logMessage(chatId, 'out', 'quiz_result', scenario);
@@ -763,150 +840,218 @@ async function sendQuizResult(chatId, answers) {
 
 // ============================================================
 // WARMUP SENDER (called by cron - every day at 10:00 Almaty)
+// v4.8.0: Production-grade. Per-user dedup via last_warmup_sent_at, batched
+// SQL fetch, rate-limit-safe send, telemetry, idempotent.
 // ============================================================
 export async function sendWarmupMessages() {
-  if (!bot) return;
-  const users = await getAllUsers({});
+  if (!bot) return { sent: 0, failed: 0, skipped: 0 };
+
+  const users = await getUsersDueForWarmup();
+  console.log(`🔥 WARMUP: ${users.length} user(s) due for next message`);
+
+  let sent = 0, failed = 0, skipped = 0, exited = 0;
 
   for (const user of users) {
-    if (!user.warmup_active) continue;
+    // Defensive double-checks (the SQL already filters, but cron+app race-conditions happen)
+    if (!user.warmup_active) { skipped++; continue; }
     if (['booked', 'confirmed', 'completed'].includes(user.booking_status)) {
       await updateUser(user.telegram_id, { warmup_active: 0 }, true);
-      continue;
+      skipped++; continue;
     }
-    // FIX v4.7.0: User must have completed quiz to get warmup messages
-    if (user.funnel_stage !== 'quiz_completed') continue;
+    if (user.funnel_stage !== 'quiz_completed') { skipped++; continue; }
 
     const nextDay = (user.warmup_day || 0) + 1;
     const scenario = user.scenario;
 
+    // Pick the best matching message (scenario-specific → generic warmup → followup)
     let msgToSend = null;
     if (scenario && SCENARIO_WARMUPS[scenario]) {
       msgToSend = SCENARIO_WARMUPS[scenario].find(m => m.day === nextDay);
     }
+    if (!msgToSend) msgToSend = WARMUP_MESSAGES.find(m => m.day === nextDay);
+    if (!msgToSend) msgToSend = FOLLOWUP_MESSAGES.find(m => m.day === nextDay);
+
     if (!msgToSend) {
-      msgToSend = WARMUP_MESSAGES.find(m => m.day === nextDay);
-    }
-    if (!msgToSend) {
-      msgToSend = FOLLOWUP_MESSAGES.find(m => m.day === nextDay);
-    }
-    if (!msgToSend) {
+      // No more warmup content for this user. After day 14 → exit survey + deactivate.
       if (nextDay > 14) {
-        if (!user.exit_reason) {
-          await sendExitSurvey(user.telegram_id);
-        }
+        if (!user.exit_reason) await sendExitSurvey(user.telegram_id);
         await updateUser(user.telegram_id, { warmup_active: 0 }, true);
+        exited++;
+      } else {
+        // Gap in content for an intermediate day — advance counter so we don't get stuck forever
+        await updateUser(user.telegram_id, { warmup_day: nextDay }, true);
+        await pool.query('UPDATE users SET last_warmup_sent_at = NOW() WHERE telegram_id = $1', [user.telegram_id]);
+        skipped++;
       }
       continue;
     }
 
-    try {
-      const keyboard = nextDay >= 5 ? {
-        inline_keyboard: [
-          [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
-          [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
-        ]
-      } : undefined;
+    const keyboard = nextDay >= 5 ? {
+      inline_keyboard: [
+        [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
+        [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+      ]
+    } : undefined;
 
-      await bot.sendMessage(user.telegram_id, msgToSend.text, {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard
-      });
+    const result = await sendSafe('sendMessage', user.telegram_id, msgToSend.text, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard
+    });
 
-      // Send social proof on day 3 and day 6
-      if ((nextDay === 3 || nextDay === 6) && scenario && TESTIMONIALS[scenario]) {
-        const testimonials = TESTIMONIALS[scenario];
-        const idx = nextDay === 3 ? 0 : (testimonials.length > 1 ? 1 : 0);
-        await new Promise(r => setTimeout(r, 2000));
-        await bot.sendMessage(user.telegram_id, testimonials[idx], { parse_mode: 'Markdown' });
-      }
-
-      await updateUser(user.telegram_id, { warmup_day: nextDay }, true);
-      await logMessage(user.telegram_id, 'out', 'warmup', `Day ${nextDay} (${scenario || 'generic'})`);
-      await logEvent('warmup_sent', user.telegram_id, { day: nextDay, scenario });
-    } catch (err) {
-      console.error(`Warmup error for ${user.telegram_id}:`, err.message);
-      await handleBlockedUser(user.telegram_id, err);
+    if (!result.ok) {
+      failed++;
+      // If user blocked the bot, sendSafe already deactivated warmup. Otherwise, still bump
+      // last_warmup_sent_at so we don't hammer the same broken target every cron tick.
+      await pool.query(
+        'UPDATE users SET last_warmup_sent_at = NOW() WHERE telegram_id = $1',
+        [user.telegram_id]
+      );
+      continue;
     }
-    await new Promise(r => setTimeout(r, 100));
+
+    // Optional social-proof testimonial on days 3 and 6
+    if ((nextDay === 3 || nextDay === 6) && scenario && TESTIMONIALS[scenario]) {
+      const testimonials = TESTIMONIALS[scenario];
+      const idx = nextDay === 3 ? 0 : (testimonials.length > 1 ? 1 : 0);
+      await sleep(1500);
+      await sendSafe('sendMessage', user.telegram_id, testimonials[idx], { parse_mode: 'Markdown' });
+    }
+
+    // Atomically advance day + stamp last_warmup_sent_at so the same user can't be picked
+    // up by the same or any subsequent cron run within ~20h.
+    await pool.query(
+      'UPDATE users SET warmup_day = $1, last_warmup_sent_at = NOW() WHERE telegram_id = $2',
+      [nextDay, user.telegram_id]
+    );
+    await logMessage(user.telegram_id, 'out', 'warmup', `Day ${nextDay} (${scenario || 'generic'})`);
+    await logEvent('warmup_sent', user.telegram_id, { day: nextDay, scenario });
+    sent++;
+
+    // ~10 msg/s, well under Telegram's 30 msg/s global limit
+    await sleep(120);
   }
+
+  console.log(`✅ WARMUP done: sent=${sent}, failed=${failed}, skipped=${skipped}, exited=${exited}`);
+  return { sent, failed, skipped, exited };
 }
 
 // ============================================================
 // REMINDER SENDER (called by cron - every 2 hours)
 // ============================================================
+// ============================================================
+// REMINDER SENDER (called by cron — every 2 hours)
+// v4.8.0: Per-channel dedup via last_*_at columns; uses quiz_started_at /
+// booking_started_at instead of updated_at (which warmup pollutes); rate-limit
+// safe via sendSafe. Returns telemetry.
+// ============================================================
 export async function sendReminders() {
-  if (!bot) return;
+  if (!bot) return null;
 
-  // 1. Quiz reminders: users who started quiz 2h+ ago but didn't finish
-  const quizStuckResult = await pool.query(`
-    SELECT * FROM users
-    WHERE funnel_stage = 'quiz'
-    AND updated_at <= NOW() - INTERVAL '2 hours'
-    AND updated_at >= NOW() - INTERVAL '24 hours'
-    AND warmup_active = 1
-  `);
+  const stats = { quiz_2h: 0, quiz_24h: 0, booking_30m: 0, booking_24h: 0, session: 0, reactivation: 0, post_session: 0 };
 
-  for (const user of quizStuckResult.rows) {
+  // Tiny per-channel runner: SQL → build message → send → mark dedup column.
+  async function runChannel({ name, sql, dedupColumn, build }) {
+    let rows;
     try {
+      const res = await pool.query(sql);
+      rows = res.rows;
+    } catch (e) {
+      console.error(`Reminder channel ${name} SQL error:`, e.message);
+      return 0;
+    }
+    let count = 0;
+    for (const user of rows) {
+      const built = await build(user);
+      if (!built) continue;
+      const sendRes = await sendSafe('sendMessage', user.telegram_id, built.text, built.options);
+      // Mark dedup column on success OR on permanent failure so we don't loop forever
+      if (dedupColumn) {
+        await pool.query(
+          `UPDATE users SET ${dedupColumn} = NOW() WHERE telegram_id = $1`,
+          [user.telegram_id]
+        );
+      }
+      if (sendRes.ok) {
+        await logEvent('reminder_sent', user.telegram_id, { type: name });
+        count++;
+      }
+      await sleep(120);
+    }
+    if (rows.length > 0) console.log(`🔔 [reminder:${name}] sent ${count}/${rows.length}`);
+    return count;
+  }
+
+  // 1. QUIZ STUCK — quiz started 2h+ ago, not finished
+  stats.quiz_2h = await runChannel({
+    name: 'quiz_2h',
+    dedupColumn: 'last_quiz_reminder_2h_at',
+    sql: `
+      SELECT * FROM users
+      WHERE funnel_stage = 'quiz'
+      AND warmup_active = 1
+      AND quiz_started_at IS NOT NULL
+      AND quiz_started_at <= NOW() - INTERVAL '2 hours'
+      AND quiz_started_at >= NOW() - INTERVAL '24 hours'
+      AND last_quiz_reminder_2h_at IS NULL
+    `,
+    build: async (user) => {
       let answers = [];
-      try { answers = JSON.parse(user.quiz_answers || '[]'); } catch(e) {}
+      try { answers = JSON.parse(user.quiz_answers || '[]'); } catch(_) {}
       const questionsLeft = QUIZ_QUESTIONS.length - answers.length;
-      if (questionsLeft <= 0) continue;
-      await bot.sendMessage(user.telegram_id, QUIZ_REMINDER_2H(questionsLeft), {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '▶️ Продолжить тест', callback_data: 'continue_quiz' }],
-            [{ text: '🔄 Начать заново', callback_data: 'restart_quiz' }]
-          ]
+      if (questionsLeft <= 0) return null;
+      return {
+        text: QUIZ_REMINDER_2H(questionsLeft),
+        options: {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '▶️ Продолжить тест', callback_data: 'continue_quiz' }],
+              [{ text: '🔄 Начать заново', callback_data: 'restart_quiz' }]
+            ]
+          }
         }
-      });
-      await logEvent('reminder_sent', user.telegram_id, { type: 'quiz_2h' });
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
+      };
     }
-    await new Promise(r => setTimeout(r, 100));
-  }
+  });
 
-  // 2. Quiz reminders: users who started quiz 24h+ ago
-  const quizAbandonedResult = await pool.query(`
-    SELECT * FROM users
-    WHERE funnel_stage = 'quiz'
-    AND updated_at <= NOW() - INTERVAL '24 hours'
-    AND updated_at >= NOW() - INTERVAL '48 hours'
-    AND warmup_active = 1
-  `);
-
-  for (const user of quizAbandonedResult.rows) {
-    try {
-      await bot.sendMessage(user.telegram_id, QUIZ_REMINDER_24H, {
+  // 2. QUIZ ABANDONED — quiz started 24h+ ago, not finished
+  stats.quiz_24h = await runChannel({
+    name: 'quiz_24h',
+    dedupColumn: 'last_quiz_reminder_24h_at',
+    sql: `
+      SELECT * FROM users
+      WHERE funnel_stage = 'quiz'
+      AND warmup_active = 1
+      AND quiz_started_at IS NOT NULL
+      AND quiz_started_at <= NOW() - INTERVAL '24 hours'
+      AND quiz_started_at >= NOW() - INTERVAL '7 days'
+      AND last_quiz_reminder_24h_at IS NULL
+    `,
+    build: async () => ({
+      text: QUIZ_REMINDER_24H,
+      options: {
         parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔮 Пройти тест', callback_data: 'quiz_start' }]
-          ]
-        }
-      });
-      await logEvent('reminder_sent', user.telegram_id, { type: 'quiz_24h' });
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
+        reply_markup: { inline_keyboard: [[{ text: '🔮 Пройти тест', callback_data: 'quiz_start' }]] }
+      }
+    })
+  });
 
-  // 3. Booking reminders: users who started booking but didn't finish (30 min)
-  const bookingStuckResult = await pool.query(`
-    SELECT * FROM users
-    WHERE funnel_stage = 'booking'
-    AND booking_status = 'none'
-    AND updated_at <= NOW() - INTERVAL '30 minutes'
-    AND updated_at >= NOW() - INTERVAL '2 hours'
-  `);
-
-  for (const user of bookingStuckResult.rows) {
-    try {
-      await bot.sendMessage(user.telegram_id, BOOKING_REMINDER_30MIN(user.booking_name || user.first_name), {
+  // 3. BOOKING STUCK — started booking 30 min+ ago, didn't finish
+  stats.booking_30m = await runChannel({
+    name: 'booking_30m',
+    dedupColumn: 'last_booking_reminder_30m_at',
+    sql: `
+      SELECT * FROM users
+      WHERE funnel_stage = 'booking'
+      AND (booking_status IS NULL OR booking_status = 'none')
+      AND booking_started_at IS NOT NULL
+      AND booking_started_at <= NOW() - INTERVAL '30 minutes'
+      AND booking_started_at >= NOW() - INTERVAL '6 hours'
+      AND last_booking_reminder_30m_at IS NULL
+    `,
+    build: async (user) => ({
+      text: BOOKING_REMINDER_30MIN(user.booking_name || user.first_name || 'друг'),
+      options: {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
@@ -914,26 +1059,26 @@ export async function sendReminders() {
             [{ text: '💬 Написать в WhatsApp', url: 'https://wa.me/77077198561' }]
           ]
         }
-      });
-      await logEvent('reminder_sent', user.telegram_id, { type: 'booking_30min' });
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
+      }
+    })
+  });
 
-  // 4. Booking reminders: users who started booking 24h+ ago but didn't finish
-  const bookingAbandonedResult = await pool.query(`
-    SELECT * FROM users
-    WHERE funnel_stage = 'booking'
-    AND booking_status = 'none'
-    AND updated_at <= NOW() - INTERVAL '24 hours'
-    AND updated_at >= NOW() - INTERVAL '48 hours'
-  `);
-
-  for (const user of bookingAbandonedResult.rows) {
-    try {
-      await bot.sendMessage(user.telegram_id, BOOKING_REMINDER_24H, {
+  // 4. BOOKING ABANDONED — started 24h+ ago, didn't finish
+  stats.booking_24h = await runChannel({
+    name: 'booking_24h',
+    dedupColumn: 'last_booking_reminder_24h_at',
+    sql: `
+      SELECT * FROM users
+      WHERE funnel_stage = 'booking'
+      AND (booking_status IS NULL OR booking_status = 'none')
+      AND booking_started_at IS NOT NULL
+      AND booking_started_at <= NOW() - INTERVAL '24 hours'
+      AND booking_started_at >= NOW() - INTERVAL '7 days'
+      AND last_booking_reminder_24h_at IS NULL
+    `,
+    build: async () => ({
+      text: BOOKING_REMINDER_24H,
+      options: {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
@@ -941,67 +1086,60 @@ export async function sendReminders() {
             [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
           ]
         }
-      });
-      await logEvent('reminder_sent', user.telegram_id, { type: 'booking_24h' });
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
+      }
+    })
+  });
 
-  // 5. Follow-up after diagnostic: 1 day after booking confirmed — reminder about session
-  const sessionReminderResult = await pool.query(`
-    SELECT * FROM users
-    WHERE booking_status = 'booked'
-    AND booking_time IS NOT NULL
-    AND updated_at <= NOW() - INTERVAL '20 hours'
-    AND updated_at >= NOW() - INTERVAL '28 hours'
-  `);
-
-  for (const user of sessionReminderResult.rows) {
-    try {
+  // 5. SESSION REMINDER — ~24h after a session was booked, single fire
+  stats.session = await runChannel({
+    name: 'session_24h',
+    dedupColumn: 'last_session_reminder_at',
+    sql: `
+      SELECT * FROM users
+      WHERE booking_status IN ('booked', 'confirmed')
+      AND booking_time IS NOT NULL
+      AND booking_started_at IS NOT NULL
+      AND booking_started_at <= NOW() - INTERVAL '20 hours'
+      AND booking_started_at >= NOW() - INTERVAL '7 days'
+      AND last_session_reminder_at IS NULL
+    `,
+    build: async (user) => {
       const name = user.booking_name || user.first_name || 'друг';
       const time = user.booking_time || 'запланированное время';
-      await bot.sendMessage(user.telegram_id,
-        `🔔 *Напоминание о диагностике*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nДиагностика пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите в WhatsApp, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
-        {
+      return {
+        text: `🔔 *Напоминание о диагностике*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nДиагностика пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите в WhatsApp, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
+        options: {
           parse_mode: 'Markdown',
           reply_markup: {
-            inline_keyboard: [
-              [{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }]
-            ]
+            inline_keyboard: [[{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }]]
           }
         }
-      );
-      await logEvent('session_reminder_sent', user.telegram_id, { booking_time: time });
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
+      };
     }
-    await new Promise(r => setTimeout(r, 100));
-  }
+  });
 
-  // 6. Reactivation: users who completed quiz but never booked, inactive 7+ days
-  // FIX v4.7.1: Wider reactivation window (7-30 days) + dedup via reactivation_sent_at
-  const reactivationResult = await pool.query(`
-    SELECT * FROM users
-    WHERE funnel_stage = 'quiz_completed'
-    AND (booking_status IS NULL OR booking_status = 'none')
-    AND exit_reason IS NULL
-    AND last_active <= NOW() - INTERVAL '7 days'
-    AND last_active >= NOW() - INTERVAL '30 days'
-    AND (reactivation_sent_at IS NULL)
-  `);
-
-  for (const user of reactivationResult.rows) {
-    try {
+  // 6. REACTIVATION — quiz_completed but never booked, inactive 7+ days, single fire
+  stats.reactivation = await runChannel({
+    name: 'reactivation_7d',
+    dedupColumn: 'reactivation_sent_at',
+    sql: `
+      SELECT * FROM users
+      WHERE funnel_stage = 'quiz_completed'
+      AND (booking_status IS NULL OR booking_status = 'none')
+      AND (exit_reason IS NULL OR exit_reason = '')
+      AND last_active <= NOW() - INTERVAL '7 days'
+      AND last_active >= NOW() - INTERVAL '60 days'
+      AND reactivation_sent_at IS NULL
+    `,
+    build: async (user) => {
       const name = user.first_name || 'друг';
       const scenario = user.scenario || 'freeze';
       const scenarioEmoji = { savior: '🛡', fear: '💔', control: '🎯', freeze: '❄️' }[scenario] || '🎭';
       const scenarioNames = { savior: 'Спасатель', fear: 'Страх близости', control: 'Гиперконтроль', freeze: 'Заморозка' };
       const scenarioName = scenarioNames[scenario] || scenario;
-      await bot.sendMessage(user.telegram_id,
-        `${scenarioEmoji} *${name}, вы ещё думаете?*\n\nНеделю назад вы прошли тест и узнали свой сценарий — *«${scenarioName}»*.\n\nЯ понимаю: принять решение непросто. Но пока вы думаете, сценарий продолжает работать. Каждый день.\n\n*Вот что происходит в вашей психике:*\n◇ Сценарий автоматически повторяется в отношениях\n◇ Вы теряете возможности и деньги\n◇ Каждый день становится сложнее\n\n💬 Я предлагаю просто поговорить — 30 минут, бесплатно, без обязательств. На диагностике вы:\n◇ Поймёте корень проблемы\n◇ Почувствуете первые изменения\n◇ Узнаете план работы\n\nМест на этой неделе осталось немного. Запишитесь сейчас 👇`,
-        {
+      return {
+        text: `${scenarioEmoji} *${name}, вы ещё думаете?*\n\nНеделю назад вы прошли тест и узнали свой сценарий — *«${scenarioName}»*.\n\nЯ понимаю: принять решение непросто. Но пока вы думаете, сценарий продолжает работать. Каждый день.\n\n*Вот что происходит в вашей психике:*\n◇ Сценарий автоматически повторяется в отношениях\n◇ Вы теряете возможности и деньги\n◇ Каждый день становится сложнее\n\n💬 Я предлагаю просто поговорить — 30 минут, бесплатно, без обязательств. На диагностике вы:\n◇ Поймёте корень проблемы\n◇ Почувствуете первые изменения\n◇ Узнаете план работы\n\nМест на этой неделе осталось немного. Запишитесь сейчас 👇`,
+        options: {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -1010,121 +1148,140 @@ export async function sendReminders() {
             ]
           }
         }
-      );
-      await updateUser(user.telegram_id, { warmup_active: 1, warmup_day: 7 }, true);
-      await pool.query('UPDATE users SET reactivation_sent_at = NOW() WHERE telegram_id = $1', [user.telegram_id]);
-      await logEvent('reactivation_sent', user.telegram_id, { scenario, days_inactive: 7 });
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
+      };
     }
-    await new Promise(r => setTimeout(r, 100));
-  }
+  });
 
-  // 7. Post-session follow-up: 2 days after session completed — offer next step
-  // FIX v4.2.0: Use session_completed_at instead of updated_at for accurate follow-up timing
-  // Only send if not already sent (post_session_followup_sent = 0)
+  // 7. POST-SESSION FOLLOW-UP — 2 days after session_completed_at, once
   const postSessionResult = await pool.query(`
     SELECT * FROM users
-    WHERE booking_status = 'confirmed'
+    WHERE booking_status IN ('confirmed', 'completed')
     AND session_completed_at IS NOT NULL
     AND post_session_followup_sent = 0
     AND session_completed_at <= NOW() - INTERVAL '2 days'
-    AND session_completed_at >= NOW() - INTERVAL '3 days'
+    AND session_completed_at >= NOW() - INTERVAL '14 days'
   `);
-
   for (const user of postSessionResult.rows) {
-    try {
-      const name = user.booking_name || user.first_name || 'друг';
-      await bot.sendMessage(user.telegram_id,
-        `🌟 *${name}, как прошла диагностика?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса. Это уже результат.\n\n*Что заметили клиенты после диагностики:*\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже и менять ситуацию\n\n*Следующий шаг:*\nПолная программа гипнотерапии (8 сессий) даёт *устойчивый результат*. Многие клиенты видят изменения уже после 3-4 сессий.\n\n💰 *Цена:* 50,000 тенге за программу (или 7,000 за сессию)\n⏱️ *Длительность:* 1 месяц (2 сессии в неделю)\n✅ *Гарантия:* Если не почувствуете результат — вернём 50% стоимости\n\n_Напишите мне — обсудим ваш путь._`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }],
-              [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
-            ]
-          }
-        }
-      );
-      await updateUser(user.telegram_id, { booking_status: 'completed', post_session_followup_sent: 1 }, true);
-      await logEvent('post_session_followup_sent', user.telegram_id, { session_completed_at: user.session_completed_at });
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
-}
-
-// ============================================================
-// 🌪️ TORNADO REACTIVATION — 30-дневная цепочка реактивации
-// v4.3.0: Психологический шторм. Гладко, но убойно.
-// ============================================================
-export async function sendTornadoReactivation(botInstance, dbPool) {
-  const b = botInstance || bot;
-  if (!b) return;
-
-  // Найти всех пользователей которые:
-  // 1. Прошли квиз но не записались
-  // 2. Неактивны 7+ дней
-  // 3. Не заблокировали бота
-  // 4. Не завершили ТОРНАДО (tornado_day < 30)
-  // 5. Не получали сообщение сегодня
-  const result = await pool.query(`
-    SELECT * FROM users
-    WHERE funnel_stage IN ('quiz_completed', 'warmup')
-    AND (booking_status IS NULL OR booking_status = 'none')
-    AND exit_reason IS NULL
-    AND last_active <= NOW() - INTERVAL '7 days'
-    AND (tornado_day IS NULL OR tornado_day < 30)
-    AND (
-      tornado_last_sent IS NULL
-      OR tornado_last_sent < NOW() - INTERVAL '23 hours'
-    )
-    ORDER BY last_active ASC
-    LIMIT 100
-  `);
-
-  console.log(`🌪️ TORNADO: Found ${result.rows.length} users to reactivate`);
-
-  for (const user of result.rows) {
-    const currentDay = (user.tornado_day || 0);
-    const nextDay = currentDay + 1;
-    const msg = TORNADO_MESSAGES[nextDay - 1];
-
-    if (!msg) continue;
-
-    try {
-      // Отправляем картинку с текстом
-      // FIX v4.7.1: Resolve image path relative to project root
-      const imgPath = path.resolve(__dirname, '..', msg.image.replace(/^\//, ''));
-      const photo = fs.existsSync(imgPath) ? imgPath : msg.image;
-      await b.sendPhoto(user.telegram_id, photo, {
-        caption: msg.text,
+    const name = user.booking_name || user.first_name || 'друг';
+    const sendRes = await sendSafe('sendMessage', user.telegram_id,
+      `🌟 *${name}, как прошла диагностика?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса. Это уже результат.\n\n*Что заметили клиенты после диагностики:*\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже и менять ситуацию\n\n*Следующий шаг:*\nПолная программа гипнотерапии (8 сессий) даёт *устойчивый результат*. Многие клиенты видят изменения уже после 3-4 сессий.\n\n💰 *Цена:* 50,000 тенге за программу (или 7,000 за сессию)\n⏱️ *Длительность:* 1 месяц (2 сессии в неделю)\n✅ *Гарантия:* Если не почувствуете результат — вернём 50% стоимости\n\n_Напишите мне — обсудим ваш путь._`,
+      {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
-            [{ text: msg.button, url: msg.url }],
-            [{ text: '🛑 Не беспокоить', callback_data: 'tornado_stop' }]
+            [{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }],
+            [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
           ]
         }
+      }
+    );
+    // Mark as sent regardless to prevent re-firing on next cron tick
+    await pool.query(
+      'UPDATE users SET post_session_followup_sent = 1 WHERE telegram_id = $1',
+      [user.telegram_id]
+    );
+    if (sendRes.ok) {
+      await logEvent('post_session_followup_sent', user.telegram_id, { session_completed_at: user.session_completed_at });
+      stats.post_session++;
+    }
+    await sleep(120);
+  }
+
+  console.log(`✅ REMINDERS done:`, JSON.stringify(stats));
+  return stats;
+}
+
+// ============================================================
+// 🌪️ TORNADO REACTIVATION — 30-day reactivation chain
+// v4.8.0: Robust image resolution with explicit fallback to text-only,
+// rate-limit-safe send, dedup via tornado_last_sent (already in SQL),
+// telemetry, and atomic counter advance.
+// ============================================================
+export async function sendTornadoReactivation() {
+  if (!bot) return { sent: 0, failed: 0 };
+
+  let result;
+  try {
+    result = await pool.query(`
+      SELECT * FROM users
+      WHERE funnel_stage IN ('quiz_completed', 'warmup')
+      AND (booking_status IS NULL OR booking_status = 'none')
+      AND (exit_reason IS NULL OR exit_reason = '')
+      AND last_active <= NOW() - INTERVAL '7 days'
+      AND (tornado_day IS NULL OR tornado_day < 30)
+      AND (tornado_last_sent IS NULL OR tornado_last_sent < NOW() - INTERVAL '23 hours')
+      ORDER BY last_active ASC
+      LIMIT 100
+    `);
+  } catch (e) {
+    console.error('🌪️ TORNADO SQL error:', e.message);
+    return { sent: 0, failed: 0 };
+  }
+
+  console.log(`🌪️ TORNADO: ${result.rows.length} users due for reactivation`);
+  let sent = 0, failed = 0;
+
+  for (const user of result.rows) {
+    const currentDay = user.tornado_day || 0;
+    const nextDay = currentDay + 1;
+    const msg = TORNADO_MESSAGES[nextDay - 1];
+    if (!msg) continue;
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: msg.button, url: msg.url }],
+        [{ text: '🛑 Не беспокоить', callback_data: 'tornado_stop' }]
+      ]
+    };
+
+    // Resolve image path safely. msg.image is stored as '/public/tornado-images/day_XX.png'
+    // and lives at <repo>/public/tornado-images/day_XX.png on disk.
+    const imgPath = path.resolve(__dirname, '..', String(msg.image || '').replace(/^\//, ''));
+    const hasImage = msg.image && fs.existsSync(imgPath);
+
+    let sendRes;
+    if (hasImage) {
+      sendRes = await sendSafe('sendPhoto', user.telegram_id, imgPath, {
+        caption: msg.text,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
       });
-
-      // Обновляем счётчик (не обновляем last_active при отправке ботом)
-      await pool.query(
-        `UPDATE users SET tornado_day = $1, tornado_last_sent = NOW() WHERE telegram_id = $2`,
-        [nextDay, user.telegram_id]
-      );
-
-      await logEvent('tornado_sent', user.telegram_id, { day: nextDay });
-      console.log(`✅ TORNADO Day ${nextDay} sent to ${user.telegram_id}`);
-    } catch (err) {
-      await handleBlockedUser(user.telegram_id, err);
+      // Telegram occasionally rejects photo sends with cryptic 400s; fall back to text
+      if (!sendRes.ok && sendRes.error !== 'blocked') {
+        console.warn(`🌪️ TORNADO photo failed for ${user.telegram_id}, falling back to text: ${sendRes.error}`);
+        sendRes = await sendSafe('sendMessage', user.telegram_id, msg.text, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
+        });
+      }
+    } else {
+      if (msg.image) console.warn(`🌪️ TORNADO image missing on disk: ${imgPath}, sending text only`);
+      sendRes = await sendSafe('sendMessage', user.telegram_id, msg.text, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      });
     }
 
-    // Пауза между отправками — не спамим Telegram API
-    await new Promise(r => setTimeout(r, 300));
+    // Always advance counter + stamp tornado_last_sent so the same user is not
+    // retried within 23 hours, even if delivery failed.
+    await pool.query(
+      `UPDATE users SET tornado_day = $1, tornado_last_sent = NOW() WHERE telegram_id = $2`,
+      [nextDay, user.telegram_id]
+    );
+
+    if (sendRes.ok) {
+      sent++;
+      await logEvent('tornado_sent', user.telegram_id, { day: nextDay });
+      console.log(`✅ TORNADO Day ${nextDay} → ${user.telegram_id}`);
+    } else {
+      failed++;
+    }
+
+    await sleep(300);
   }
+
+  console.log(`✅ TORNADO done: sent=${sent}, failed=${failed}`);
+  return { sent, failed };
 }
 
 // ============================================================

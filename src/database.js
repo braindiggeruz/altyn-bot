@@ -76,6 +76,25 @@ export async function initDatabase() {
       // v4.3.0: TORNADO reactivation
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_day INTEGER DEFAULT 0`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_last_sent TIMESTAMP`,
+      // v4.8.0: Per-channel last-sent tracking (decouples warmup/reminder/tornado timings from updated_at)
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_warmup_sent_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_quiz_reminder_2h_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_quiz_reminder_24h_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_booking_reminder_30m_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_booking_reminder_24h_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_session_reminder_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_started_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_started_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_completed_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_confirmed_at TIMESTAMP`,
+      // v4.8.0: Hot indexes for cron queries
+      `CREATE INDEX IF NOT EXISTS idx_users_warmup ON users (warmup_active, funnel_stage, last_warmup_sent_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_funnel_stage ON users (funnel_stage)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_booking_status ON users (booking_status)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_tornado ON users (tornado_day, tornado_last_sent, last_active)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users (telegram_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_messages_log_user ON messages_log (user_telegram_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events (event_type, created_at)`,
       // Timestamps
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
@@ -232,6 +251,8 @@ export const createUser = async (userData) => {
 
 export const updateUser = async (telegramId, fields, skipLastActive = false) => {
   // FIX v4.6.0: Filter out undefined values AND auto-managed fields to prevent duplicates
+  // v4.8.0: 'last_active' and 'updated_at' remain auto-managed; everything else (including new
+  // last_*_sent_at trackers) is allowed to be set explicitly by the caller.
   const autoFields = ['last_active', 'updated_at'];
   const keys = Object.keys(fields).filter(k => fields[k] !== undefined && !autoFields.includes(k));
   if (keys.length === 0 && skipLastActive) return;
@@ -244,7 +265,10 @@ export const updateUser = async (telegramId, fields, skipLastActive = false) => 
   // FIX v4.5.0: Skip last_active update when skipLastActive=true (for bot-initiated messages)
   // FIX v4.6.0: Prevent duplicate column names in SET clause
   // FIX v4.7.1: Added warmup_day + booking_name so updated_at tracks warmup progress and booking flow
-  const significantFields = ['funnel_stage', 'scenario', 'booking_status', 'quiz_answers', 'warmup_day', 'booking_name'];
+  // FIX v4.8.0: REMOVED warmup_day from significantFields. updated_at is now reserved exclusively
+  // for user-initiated funnel changes (start, quiz progress, booking input). Warmup progress is
+  // tracked via last_warmup_sent_at to keep reminder windows accurate.
+  const significantFields = ['funnel_stage', 'scenario', 'booking_status', 'quiz_answers', 'booking_name', 'booking_request', 'booking_time'];
   const hasSignificantChange = keys.some(k => significantFields.includes(k));
   
   let updateClause = sets;
@@ -312,6 +336,22 @@ export const getStats = async () => {
     todayUsers, weekUsers, monthUsers, scenarios, stages, sources, dailyStats,
     conversionRate, quizCompletionRate, bookingRate
   };
+};
+
+// v4.8.0: Specialised cron query — only fetch users actually due for a warmup run
+// (quiz_completed, warmup active, not booked, not exited, and not already messaged today)
+export const getUsersDueForWarmup = async () => {
+  const result = await pool.query(`
+    SELECT * FROM users
+    WHERE warmup_active = 1
+    AND funnel_stage = 'quiz_completed'
+    AND (booking_status IS NULL OR booking_status = 'none')
+    AND (exit_reason IS NULL OR exit_reason = '')
+    AND (last_warmup_sent_at IS NULL OR last_warmup_sent_at < NOW() - INTERVAL '20 hours')
+    ORDER BY warmup_day ASC, last_warmup_sent_at ASC NULLS FIRST
+    LIMIT 500
+  `);
+  return result.rows;
 };
 
 export const getAllUsers = async (filters = {}) => {

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 import { initDatabase } from './database.js';
-import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation, setBot } from './bot.js';
+import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation, setBot, runOnce } from './bot.js';
 import { TORNADO_MESSAGES } from './content.js';
 import adminRouter from './admin-api.js';
 
@@ -77,6 +77,31 @@ async function startApp() {
       });
     });
 
+    // ===== Admin-only manual cron triggers (great for prod smoke tests) =====
+    // Auth: pass header  X-Admin-Secret: <process.env.ADMIN_TRIGGER_SECRET>
+    // If env var is unset, the endpoint refuses to run — fail closed.
+    const triggerSecret = process.env.ADMIN_TRIGGER_SECRET || null;
+    function requireSecret(req, res) {
+      if (!triggerSecret) { res.status(503).json({ error: 'ADMIN_TRIGGER_SECRET not set on server' }); return false; }
+      if (req.get('X-Admin-Secret') !== triggerSecret) { res.status(401).json({ error: 'unauthorized' }); return false; }
+      return true;
+    }
+    app.post('/admin/trigger/warmup', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const r = await runOnce('manual:warmup', () => sendWarmupMessages());
+      res.json({ ok: true, result: r });
+    });
+    app.post('/admin/trigger/reminders', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const r = await runOnce('manual:reminders', () => sendReminders());
+      res.json({ ok: true, result: r });
+    });
+    app.post('/admin/trigger/tornado', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const r = await runOnce('manual:tornado', () => sendTornadoReactivation());
+      res.json({ ok: true, result: r });
+    });
+
     // Health check
     app.get('/health', (req, res) => {
       const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -85,7 +110,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '4.7.0',
+        version: '4.8.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
@@ -110,7 +135,7 @@ async function startApp() {
     });
 
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🌐 Admin panel v4.7.0 running on port ${PORT}`);
+      console.log(`🌐 Admin panel v4.8.0 running on port ${PORT}`);
     }).on('error', (err) => {
       console.error('Server error:', err.message);
       if (err.code === 'EADDRINUSE') {
@@ -127,8 +152,8 @@ async function startApp() {
     cron.schedule('0 5 * * *', () => {
       const now = new Date().toISOString();
       console.log(`⏰ [${now}] CRON: Running warmup messages (10:00 Almaty)...`);
-      sendWarmupMessages()
-        .then(() => console.log(`✅ [${new Date().toISOString()}] CRON: Warmup messages done`))
+      runOnce('cron:warmup', () => sendWarmupMessages())
+        .then(r => console.log(`✅ [${new Date().toISOString()}] CRON: warmup`, JSON.stringify(r)))
         .catch(err => console.error(`❌ CRON warmup error:`, err.message));
     });
 
@@ -136,8 +161,8 @@ async function startApp() {
     cron.schedule('0 */2 * * *', () => {
       const now = new Date().toISOString();
       console.log(`⏰ [${now}] CRON: Running reminders (every 2h)...`);
-      sendReminders()
-        .then(() => console.log(`✅ [${new Date().toISOString()}] CRON: Reminders done`))
+      runOnce('cron:reminders', () => sendReminders())
+        .then(r => console.log(`✅ [${new Date().toISOString()}] CRON: reminders`, JSON.stringify(r)))
         .catch(err => console.error(`❌ CRON reminders error:`, err.message));
     });
 
@@ -167,8 +192,8 @@ async function startApp() {
     cron.schedule('30 5 * * *', () => {
       const now = new Date().toISOString();
       console.log(`⏰ [${now}] CRON: Running TORNADO reactivation (10:30 Almaty)...`);
-      sendTornadoReactivation()
-        .then(() => console.log(`✅ [${new Date().toISOString()}] CRON: TORNADO done`))
+      runOnce('cron:tornado', () => sendTornadoReactivation())
+        .then(r => console.log(`✅ [${new Date().toISOString()}] CRON: TORNADO`, JSON.stringify(r)))
         .catch(err => console.error(`❌ CRON TORNADO error:`, err.message));
     });
 
@@ -209,7 +234,7 @@ async function startApp() {
     });
 
     const mode = process.env.RAILWAY_PUBLIC_DOMAIN ? 'WEBHOOK' : 'POLLING';
-    console.log(`✅ Altyn Therapy System v4.7.0 started (${mode} mode, PostgreSQL)`);
+    console.log(`✅ Altyn Therapy System v4.8.0 started (${mode} mode, PostgreSQL)`);
     console.log(`🤖 Bot: @altyntherapybot`);
     console.log(`🌐 Admin: http://localhost:${PORT}`);
     console.log(`📢 Notify Group: ${process.env.NOTIFY_GROUP_ID || 'NOT SET — add NOTIFY_GROUP_ID to Railway variables!'}`);
