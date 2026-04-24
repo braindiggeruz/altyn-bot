@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 import { initDatabase } from './database.js';
-import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation, setBot, runOnce } from './bot.js';
+import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation, setBot, runOnce, notifyAdmin } from './bot.js';
 import { TORNADO_MESSAGES } from './content.js';
 import adminRouter from './admin-api.js';
 
@@ -100,6 +100,19 @@ async function startApp() {
       if (!requireSecret(req, res)) return;
       const r = await runOnce('manual:tornado', () => sendTornadoReactivation());
       res.json({ ok: true, result: r });
+    });
+
+    // Quick smoke test: dispatch a test message to NOTIFY_GROUP_ID + OWNER_TELEGRAM_ID.
+    // Use to verify group notifications work end-to-end without going through the funnel.
+    app.post('/admin/test-notify', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const env_targets = {
+        NOTIFY_GROUP_ID: process.env.NOTIFY_GROUP_ID || null,
+        OWNER_TELEGRAM_ID: process.env.OWNER_TELEGRAM_ID || null
+      };
+      const stamp = new Date().toISOString();
+      const r = await notifyAdmin(`🔥 *TEST notify*\n\nServer time: ${stamp}\nIf you see this in the group — group notifications work ✅`);
+      res.json({ ok: true, result: r, env_targets });
     });
 
     // Health check

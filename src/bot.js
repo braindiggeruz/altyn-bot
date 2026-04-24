@@ -24,18 +24,54 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OWNER_ID = process.env.OWNER_TELEGRAM_ID || null;
 const GROUP_ID = process.env.NOTIFY_GROUP_ID || null;
 
-async function notifyAdmin(text, options = {}) {
-  if (!bot) return;
-  const targets = [];
-  if (GROUP_ID) targets.push(GROUP_ID);
-  if (OWNER_ID && OWNER_ID !== GROUP_ID) targets.push(OWNER_ID);
+// Telegram supergroup ids start with -100 and MUST be passed as numbers, not strings,
+// to node-telegram-bot-api. We coerce explicitly here so a misconfigured env var
+// ("-1003406252597") still works.
+function coerceTarget(t) {
+  if (t === null || t === undefined || t === '') return null;
+  const s = String(t).trim();
+  // Numeric-looking? Convert to Number. Otherwise leave as-is (e.g. @channel_username).
+  if (/^-?\d+$/.test(s)) return Number(s);
+  return s;
+}
+
+export async function notifyAdmin(text, options = {}) {
+  if (!bot) {
+    console.warn('⚠️ notifyAdmin called before bot was ready');
+    if (global.__addError) global.__addError('notifyAdmin', 'bot not initialized', '');
+    return { ok: false, reason: 'bot_not_ready' };
+  }
+  const raw = [GROUP_ID, OWNER_ID].filter(Boolean);
+  const targets = [...new Set(raw.map(coerceTarget).filter(Boolean))];
+  if (targets.length === 0) {
+    console.warn('⚠️ notifyAdmin: no targets configured (NOTIFY_GROUP_ID / OWNER_TELEGRAM_ID)');
+    if (global.__addError) global.__addError('notifyAdmin', 'no targets configured', '');
+    return { ok: false, reason: 'no_targets' };
+  }
+  let successes = 0;
   for (const target of targets) {
     try {
       await bot.sendMessage(target, text, { parse_mode: 'Markdown', ...options });
+      console.log(`📢 notifyAdmin → ${target}: OK`);
+      successes++;
     } catch (e) {
-      console.error(`Notify error for ${target}:`, e.message);
+      const msg = `Notify error for ${target}: ${e.message}`;
+      console.error('❌ ' + msg);
+      if (global.__addError) global.__addError('notifyAdmin', msg, e.stack || '');
+      // Try plain-text fallback if Markdown parsing was the issue
+      if (/can't parse entities|parse_mode/i.test(e.message)) {
+        try {
+          await bot.sendMessage(target, text, { ...options, parse_mode: undefined });
+          console.log(`📢 notifyAdmin → ${target}: OK (plain-text fallback)`);
+          successes++;
+        } catch (e2) {
+          console.error(`❌ notifyAdmin fallback also failed for ${target}: ${e2.message}`);
+          if (global.__addError) global.__addError('notifyAdmin', `fallback failed for ${target}: ${e2.message}`, e2.stack || '');
+        }
+      }
     }
   }
+  return { ok: successes > 0, sent_to: successes, total_targets: targets.length };
 }
 
 let bot;
