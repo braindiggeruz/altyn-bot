@@ -463,14 +463,42 @@ export const updateBroadcast = async (id, fields) => {
 };
 
 export const getBroadcastUsers = async (segment) => {
-  if (segment === 'all') {
-    const result = await pool.query('SELECT telegram_id FROM users WHERE warmup_active = 1');
-    return result.rows;
+  let sql, params = [];
+  switch (segment) {
+    case 'all':
+      sql = 'SELECT telegram_id FROM users WHERE warmup_active = 1';
+      break;
+    case 'quiz_completed':
+      sql = "SELECT telegram_id FROM users WHERE funnel_stage = 'quiz_completed'";
+      break;
+    case 'warmup_active':
+      sql = 'SELECT telegram_id FROM users WHERE warmup_active = 1 AND warmup_day > 0';
+      break;
+    case 'booked':
+      sql = "SELECT telegram_id FROM users WHERE booking_status IN ('booked', 'confirmed')";
+      break;
+    case 'not_booked':
+      sql = "SELECT telegram_id FROM users WHERE funnel_stage = 'quiz_completed' AND (booking_status IS NULL OR booking_status = 'none')";
+      break;
+    case 'new_users':
+      sql = "SELECT telegram_id FROM users WHERE created_at >= NOW() - INTERVAL '7 days'";
+      break;
+    case 'inactive':
+      sql = "SELECT telegram_id FROM users WHERE last_active <= NOW() - INTERVAL '7 days'";
+      break;
+    default:
+      // Handle scenario_* segments (e.g. scenario_savior → savior)
+      if (segment.startsWith('scenario_')) {
+        const scenarioName = segment.replace('scenario_', '');
+        sql = 'SELECT telegram_id FROM users WHERE scenario = $1';
+        params = [scenarioName];
+      } else {
+        // Fallback: treat as scenario name directly
+        sql = 'SELECT telegram_id FROM users WHERE scenario = $1';
+        params = [segment];
+      }
   }
-  const result = await pool.query(
-    'SELECT telegram_id FROM users WHERE warmup_active = 1 AND scenario = $1',
-    [segment]
-  );
+  const result = await pool.query(sql, params);
   return result.rows;
 };
 
