@@ -87,6 +87,31 @@ export async function initDatabase() {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_started_at TIMESTAMP`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_completed_at TIMESTAMP`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_confirmed_at TIMESTAMP`,
+      // v4.8.0: Drop NOT NULL on legacy "openId" column if present (caused /start crashes on prod).
+      // The column was created by an earlier deploy that no longer exists in code.
+      // We make it nullable + give a default so old code paths that touched it still work,
+      // and new createUser() inserts no longer violate the constraint.
+      // Generic safety net: for ANY column in users that is NOT NULL, has no default,
+      // and is NOT in our known managed-column list, drop the NOT NULL constraint.
+      // This unsticks the bot from any legacy schema artifact (openId, etc).
+      `DO $$
+       DECLARE
+         r RECORD;
+         managed TEXT[] := ARRAY['id','telegram_id'];
+       BEGIN
+         FOR r IN
+           SELECT column_name
+           FROM information_schema.columns
+           WHERE table_name = 'users'
+             AND table_schema = 'public'
+             AND is_nullable = 'NO'
+             AND column_default IS NULL
+             AND NOT (column_name = ANY(managed))
+         LOOP
+           EXECUTE format('ALTER TABLE users ALTER COLUMN %I DROP NOT NULL', r.column_name);
+           RAISE NOTICE 'Dropped NOT NULL from legacy column users.%', r.column_name;
+         END LOOP;
+       END $$;`,
       // v4.8.0: Hot indexes for cron queries
       `CREATE INDEX IF NOT EXISTS idx_users_warmup ON users (warmup_active, funnel_stage, last_warmup_sent_at)`,
       `CREATE INDEX IF NOT EXISTS idx_users_funnel_stage ON users (funnel_stage)`,
