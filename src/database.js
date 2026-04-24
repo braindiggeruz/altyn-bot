@@ -41,15 +41,48 @@ function querySync(text, params = []) {
 export async function initDatabase() {
   const client = await pool.connect();
   try {
-    // First, add missing columns if they don't exist (migration for v4.2.0)
-    // Migration v4.2.0: session tracking fields
-    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_completed_at TIMESTAMP`).catch(() => {});
-    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS post_session_followup_sent INTEGER DEFAULT 0`).catch(() => {});
-    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reactivation_sent_at TIMESTAMP`).catch(() => {});
-    // Migration v4.3.0: TORNADO reactivation fields
-    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_day INTEGER DEFAULT 0`).catch(() => {});
-    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_last_sent TIMESTAMP`).catch(() => {});
-    console.log('✅ DB migrations applied (v4.2.0 + v4.3.0)');
+    // FIX v4.7.0: Add ALL potentially missing columns to users table
+    // This ensures the schema matches regardless of when the table was originally created
+    const migrations = [
+      // Core user fields
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS scenario TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_answers TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_score TEXT DEFAULT '0'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS funnel_stage TEXT DEFAULT 'new'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS warmup_day INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS warmup_active INTEGER DEFAULT 1`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_name TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_request TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_time TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_status TEXT DEFAULT 'none'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'organic'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_source TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_medium TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_campaign TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS exit_reason TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tags TEXT DEFAULT '[]'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT`,
+      // v4.2.0: session tracking
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS session_completed_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS post_session_followup_sent INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS reactivation_sent_at TIMESTAMP`,
+      // v4.3.0: TORNADO reactivation
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_day INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_last_sent TIMESTAMP`,
+      // Timestamps
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NOW()`,
+    ];
+    for (const mig of migrations) {
+      await client.query(mig).catch(() => {});
+    }
+    console.log('✅ DB migrations applied (v4.7.0 - all columns ensured)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
