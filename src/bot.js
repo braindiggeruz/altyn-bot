@@ -1377,58 +1377,210 @@ async function sendExitSurvey(telegramId) {
 }
 
 // ============================================================
-// BROADCAST SENDER
+// BROADCAST: Helpers — image URL normalization + validation
+// ============================================================
+
+/**
+ * Normalize public image URLs that Telegram cannot fetch as-is.
+ * The most common admin mistake is pasting a Google Drive *view* page
+ * (which returns HTML) instead of a direct download URL.
+ *   https://drive.google.com/file/d/<ID>/view?usp=sharing  →  https://drive.google.com/uc?export=download&id=<ID>
+ *   https://drive.google.com/open?id=<ID>                 →  same
+ * Returns the original URL when nothing to fix.
+ */
+function normalizeImageUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+
+  let m = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+  m = trimmed.match(/drive\.google\.com\/open\?(?:.*&)?id=([a-zA-Z0-9_-]+)/);
+  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+
+  return trimmed;
+}
+
+/**
+ * HEAD-check (with GET fallback for hosts that 405/403 HEAD) that the URL
+ * actually returns an image. Used as pre-flight before mass-broadcast so
+ * one bad image URL doesn't kill all ~5000 sends with 100% failed_count.
+ * Returns { ok, reason?, contentType?, finalUrl? }.
+ */
+async function checkImageUrl(url, timeoutMs = 7000) {
+  if (!url) return { ok: false, reason: 'empty_url' };
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let res;
+    try {
+      res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: controller.signal });
+    } catch (e) {
+      // Some CDNs reject HEAD — retry GET with Range header (cheap)
+      res = await fetch(url, {
+        method: 'GET', redirect: 'follow', signal: controller.signal,
+        headers: { 'Range': 'bytes=0-2047' }
+      });
+    }
+    if (!res.ok && res.status !== 206) return { ok: false, reason: `HTTP ${res.status}` };
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.startsWith('image/')) return { ok: false, reason: `not an image (Content-Type: ${ct || 'unknown'})` };
+    return { ok: true, contentType: ct, finalUrl: res.url || url };
+  } catch (e) {
+    return { ok: false, reason: e.name === 'AbortError' ? 'timeout' : e.message };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Build the inline keyboard for broadcast messages — extracted so test mode
+// uses the exact same keyboard the mass send will use.
+function buildBroadcastKeyboard(buttonsJson) {
+  let buttons = null;
+  try { if (buttonsJson) buttons = JSON.parse(buttonsJson); } catch (e) {}
+  return buttons && buttons.length > 0 ? {
+    inline_keyboard: buttons.map(b => [{
+      text: b.text,
+      ...(b.url ? { url: b.url } : { callback_data: b.callback || 'book_diagnostic' })
+    }])
+  } : {
+    inline_keyboard: [
+      [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
+    ]
+  };
+}
+
+/**
+ * Send the broadcast to a SINGLE chat id — used by the admin "🧪 Test on me"
+ * button to verify content + image + buttons before hitting the real list.
+ * Returns { ok, error?, image_url_used?, image_warning? }.
+ */
+export async function sendBroadcastToChat(broadcastId, chatId) {
+  if (!bot) return { ok: false, error: 'bot_not_initialized' };
+
+  const r = await pool.query('SELECT * FROM broadcasts WHERE id = $1', [broadcastId]);
+  const broadcast = r.rows[0];
+  if (!broadcast) return { ok: false, error: 'broadcast_not_found' };
+  if (!chatId) return { ok: false, error: 'chat_id_required' };
+
+  const keyboard = buildBroadcastKeyboard(broadcast.buttons);
+  const normalizedUrl = normalizeImageUrl(broadcast.image_url);
+
+  let imageWarning = null;
+  let imageUrlUsed = normalizedUrl;
+  if (normalizedUrl) {
+    const check = await checkImageUrl(normalizedUrl);
+    if (!check.ok) {
+      imageWarning = `Картинка не отправлена: ${check.reason}`;
+      imageUrlUsed = null;
+    }
+  }
+
+  let sendRes;
+  if (imageUrlUsed) {
+    sendRes = await sendSafe('sendPhoto', chatId, imageUrlUsed, {
+      caption: broadcast.content,
+      reply_markup: keyboard
+    });
+    // If Telegram still rejects the image (e.g. >5MB / CDN redirect), retry text-only
+    if (!sendRes.ok && /wrong type|web page content|file is too big|wrong file/i.test(sendRes.error || '')) {
+      imageWarning = `Картинка отвергнута Telegram: ${sendRes.error}. Отправлен текст без картинки.`;
+      sendRes = await sendSafe('sendMessage', chatId, broadcast.content, { reply_markup: keyboard });
+    }
+  } else {
+    sendRes = await sendSafe('sendMessage', chatId, broadcast.content, { reply_markup: keyboard });
+  }
+
+  if (!sendRes.ok) {
+    return { ok: false, error: sendRes.error || 'send_failed', image_warning: imageWarning };
+  }
+  return { ok: true, image_url_used: imageUrlUsed, image_warning: imageWarning };
+}
+
+// ============================================================
+// SEND BROADCAST: Production-grade dispatcher
 // ============================================================
 export async function sendBroadcast(broadcastId) {
-  if (!bot) return { sent: 0, failed: 0 };
+  if (!bot) {
+    console.error(`❌ BROADCAST #${broadcastId} aborted: bot is not initialized`);
+    await updateBroadcast(broadcastId, { status: 'error' });
+    return { sent: 0, failed: 0, total: 0, blocked: 0, reason: 'bot_not_initialized' };
+  }
 
   const broadcastResult = await pool.query('SELECT * FROM broadcasts WHERE id = $1', [broadcastId]);
   const broadcast = broadcastResult.rows[0];
-  if (!broadcast) return { sent: 0, failed: 0 };
+  if (!broadcast) {
+    console.error(`❌ BROADCAST #${broadcastId} aborted: broadcast row not found`);
+    return { sent: 0, failed: 0, total: 0, blocked: 0, reason: 'not_found' };
+  }
 
   const users = await getBroadcastUsers(broadcast.segment);
-  let sent = 0, failed = 0;
+  if (users.length === 0) {
+    console.warn(`⚠️ BROADCAST #${broadcastId} segment="${broadcast.segment}" has 0 active recipients`);
+    await updateBroadcast(broadcastId, {
+      status: 'sent', sent_count: 0, failed_count: 0, sent_at: new Date().toISOString()
+    });
+    return { sent: 0, failed: 0, total: 0, blocked: 0, reason: 'no_recipients' };
+  }
 
-  let buttons = null;
-  try {
-    if (broadcast.buttons) {
-      buttons = JSON.parse(broadcast.buttons);
+  // ---- Pre-flight: normalize + validate image URL ONCE (not per-user) ----
+  const keyboard = buildBroadcastKeyboard(broadcast.buttons);
+  const normalizedUrl = normalizeImageUrl(broadcast.image_url);
+  let imageUrlUsed = normalizedUrl;
+  let imageWarning = null;
+
+  if (normalizedUrl) {
+    const check = await checkImageUrl(normalizedUrl);
+    if (!check.ok) {
+      imageWarning = `Image URL invalid (${check.reason}) — falling back to text-only for all recipients`;
+      console.warn(`⚠️ BROADCAST #${broadcastId} ${imageWarning}`);
+      imageUrlUsed = null;
+    } else if (normalizedUrl !== broadcast.image_url) {
+      console.log(`🔧 BROADCAST #${broadcastId} normalized image_url: ${broadcast.image_url} → ${normalizedUrl}`);
+      // Persist normalised URL back so admin sees the cleaned-up version
+      await pool.query('UPDATE broadcasts SET image_url = $1 WHERE id = $2', [normalizedUrl, broadcastId]);
     }
-  } catch(e) {}
+  }
+
+  console.log(`📤 BROADCAST #${broadcastId} starting: segment="${broadcast.segment}", recipients=${users.length}, image=${imageUrlUsed ? 'yes' : 'no'}`);
+
+  // ---- Per-user dispatch ----
+  let sent = 0, failed = 0, blocked = 0;
+  const errorsSample = []; // first 10 distinct errors so we can debug post-mortem
 
   for (const u of users) {
     const tid = u.telegram_id;
     if (!tid) { failed++; continue; }
 
-    const keyboard = buttons && buttons.length > 0 ? {
-      inline_keyboard: buttons.map(b => [{
-        text: b.text,
-        ...(b.url ? { url: b.url } : { callback_data: b.callback || 'book_diagnostic' })
-      }])
-    } : {
-      inline_keyboard: [
-        [{ text: '📝 Записаться', callback_data: 'book_diagnostic' }]
-      ]
-    };
-
-    // Use sendSafe for rate-limit protection + retry on 429
-    // Skip parse_mode for user-generated broadcast content to avoid Markdown parse errors
     let sendRes;
-    if (broadcast.image_url) {
-      sendRes = await sendSafe('sendPhoto', tid, broadcast.image_url, {
+    if (imageUrlUsed) {
+      sendRes = await sendSafe('sendPhoto', tid, imageUrlUsed, {
         caption: broadcast.content,
         reply_markup: keyboard
       });
+      // If first user trips a "wrong type/file too big" error → image is bad
+      // for everyone; downgrade to text for the rest of this run.
+      if (!sendRes.ok && sent === 0 && /wrong type|web page content|file is too big|wrong file/i.test(sendRes.error || '')) {
+        console.warn(`⚠️ BROADCAST #${broadcastId} image rejected by Telegram (${sendRes.error}) — switching to text-only for remaining ${users.length - failed} recipients`);
+        imageUrlUsed = null;
+        imageWarning = `Картинка отвергнута Telegram (${sendRes.error}); отправлен только текст`;
+        sendRes = await sendSafe('sendMessage', tid, broadcast.content, { reply_markup: keyboard });
+      }
     } else {
-      sendRes = await sendSafe('sendMessage', tid, broadcast.content, {
-        reply_markup: keyboard
-      });
+      sendRes = await sendSafe('sendMessage', tid, broadcast.content, { reply_markup: keyboard });
     }
 
     if (sendRes.ok) {
       sent++;
+    } else if (sendRes.error === 'blocked') {
+      blocked++;
+      failed++;
     } else {
       failed++;
+      if (errorsSample.length < 10 && sendRes.error) {
+        errorsSample.push({ tid, reason: sendRes.error });
+      }
+      console.warn(`  ❌ ${tid} → ${sendRes.error}`);
     }
     await sleep(120);
   }
@@ -1439,9 +1591,11 @@ export async function sendBroadcast(broadcastId) {
     failed_count: failed,
     sent_at: new Date().toISOString()
   });
-  await logEvent('broadcast_sent', null, { id: broadcastId, sent, failed });
-  console.log(`📤 BROADCAST #${broadcastId} done: sent=${sent}, failed=${failed}`);
-  return { sent, failed };
+  await logEvent('broadcast_sent', null, {
+    id: broadcastId, sent, failed, blocked, total: users.length, image_warning: imageWarning, errors_sample: errorsSample
+  });
+  console.log(`📤 BROADCAST #${broadcastId} done: total=${users.length} sent=${sent} failed=${failed} blocked=${blocked}${imageWarning ? ' [' + imageWarning + ']' : ''}`);
+  return { sent, failed, blocked, total: users.length, image_warning: imageWarning, errors_sample: errorsSample };
 }
 
 // Export bot getter for use in other modules
