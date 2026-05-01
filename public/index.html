@@ -326,6 +326,7 @@
     <div class="form-group"><label class="form-label">Запланировать</label><input class="form-input" type="datetime-local" id="bc-schedule"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-outline" onclick="closeModal('broadcast-modal')">Отмена</button>
+      <button class="btn btn-outline" onclick="testBroadcastDraft()" title="Сохранит как черновик и отправит только на твой Telegram ID">🧪 Тест на меня</button>
       <button class="btn btn-outline" onclick="saveBroadcast('draft')">💾 Черновик</button>
       <button class="btn btn-gold" onclick="saveBroadcast('send')">📤 Отправить</button>
     </div>
@@ -544,7 +545,7 @@ async function loadBroadcasts(){
     <tbody>${b.map(x=>`<tr><td><strong>${x.title}</strong>${x.ab_variant?` <span class="tag tag-purple">${x.ab_variant}</span>`:''}</td>
       <td><span class="tag">${x.segment}</span></td><td><span class="tag ${sc[x.status]||''}">${sn[x.status]||x.status}</span></td>
       <td>${x.sent_count||'—'}</td><td>${x.failed_count||'—'}</td><td style="font-size:11px;color:var(--text3)">${(x.sent_at||x.created_at)?.slice(0,16)||''}</td>
-      <td>${x.status==='draft'?`<button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${x.id})">📤</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет рассылок</p>';
+      <td><button class="btn btn-sm btn-outline" onclick="testBroadcast(${x.id})" title="Тест на твой Telegram">🧪</button>${x.status==='draft'?` <button class="btn btn-sm btn-gold" onclick="sendBroadcastById(${x.id})">📤</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<p style="text-align:center;color:var(--text3);padding:40px">Нет рассылок</p>';
 }
 
 async function updateSegmentCount(){
@@ -554,15 +555,71 @@ async function updateSegmentCount(){
 }
 
 async function saveBroadcast(mode){
-  const t=document.getElementById('bc-title').value,c=document.getElementById('bc-content').value;
+  const t=document.getElementById('bc-title').value.trim();
+  const c=document.getElementById('bc-content').value.trim();
   if(!t||!c)return toast('Заполните поля',true);
   const sch=document.getElementById('bc-schedule').value;
   const d=await api('/broadcasts',{method:'POST',body:JSON.stringify({title:t,content:c,image_url:document.getElementById('bc-image').value||null,segment:document.getElementById('bc-segment').value,status:sch?'scheduled':'draft',scheduled_at:sch||null})});
-  if(mode==='send'&&d?.id)await api(`/broadcasts/${d.id}/send`,{method:'POST'});
-  closeModal('broadcast-modal');loadBroadcasts();toast(mode==='send'?'Отправляется!':sch?'Запланировано':'Черновик сохранён');
+  if(!d||d.error||!d.id){
+    toast('Ошибка создания: '+(d?.error||d?.message||'нет ответа от сервера'),true);
+    return;
+  }
+  if(mode==='send'){
+    const r=await api(`/broadcasts/${d.id}/send`,{method:'POST'});
+    if(!r||r.error){
+      const msg=r?.message||r?.error||'неизвестная ошибка';
+      const detail=r?.recipients!==undefined?` (получателей: ${r.recipients})`:'';
+      toast('Не отправлено: '+msg+detail,true);
+      loadBroadcasts();
+      return;
+    }
+    let msg=`Отправляется на ${r.recipients} получателей`;
+    if(r.has_image)msg+=' (с картинкой)';
+    toast(msg);
+  }else{
+    toast(sch?'Запланировано':'Черновик сохранён');
+  }
+  closeModal('broadcast-modal');
+  loadBroadcasts();
 }
 
-async function sendBroadcastById(id){if(!confirm('Отправить?'))return;await api(`/broadcasts/${id}/send`,{method:'POST'});loadBroadcasts();toast('Отправляется!')}
+async function sendBroadcastById(id){
+  if(!confirm('Отправить рассылку?'))return;
+  const r=await api(`/broadcasts/${id}/send`,{method:'POST'});
+  if(!r||r.error){
+    toast('Не отправлено: '+(r?.message||r?.error||'нет ответа'),true);
+    loadBroadcasts();
+    return;
+  }
+  toast(`Отправляется на ${r.recipients} получателей`);
+  loadBroadcasts();
+}
+
+async function testBroadcast(id){
+  const stored=localStorage.getItem('altyn_test_chat_id')||'';
+  const cid=prompt('Telegram ID для тестовой отправки:\n(оставь пустым — отправлю на OWNER_TELEGRAM_ID сервера)',stored);
+  if(cid===null)return;
+  if(cid)localStorage.setItem('altyn_test_chat_id',cid);
+  const r=await api(`/broadcasts/${id}/test`,{method:'POST',body:JSON.stringify(cid?{chat_id:Number(cid)}:{})});
+  if(!r||r.error){
+    toast('Тест не отправлен: '+(r?.message||r?.error||'нет ответа'),true);
+    return;
+  }
+  let msg='✓ Тест отправлен в Telegram';
+  if(r.image_warning)msg+=` ⚠ ${r.image_warning}`;
+  toast(msg);
+}
+
+async function testBroadcastDraft(){
+  const t=document.getElementById('bc-title').value.trim();
+  const c=document.getElementById('bc-content').value.trim();
+  if(!t||!c)return toast('Заполните заголовок и текст перед тестом',true);
+  // Сохраняем как draft, тестируем, оставляем draft.
+  const d=await api('/broadcasts',{method:'POST',body:JSON.stringify({title:t,content:c,image_url:document.getElementById('bc-image').value||null,segment:document.getElementById('bc-segment').value,status:'draft',scheduled_at:null})});
+  if(!d||!d.id)return toast('Ошибка создания черновика для теста',true);
+  await testBroadcast(d.id);
+  loadBroadcasts();
+}
 
 async function loadTemplates(){
   const t=await api('/templates');if(!t)return;

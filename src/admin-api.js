@@ -14,7 +14,7 @@ import {
   getCohortData, getUsersForExport,
   pool
 } from './database.js';
-import { sendBroadcast } from './bot.js';
+import { sendBroadcast, sendBroadcastToChat } from './bot.js';
 
 const router = express.Router();
 // FIX v4.7.0: Use stable fallback secret instead of random (tokens survive restarts)
@@ -338,19 +338,77 @@ router.post('/broadcasts', authMiddleware, async (req, res) => {
 router.post('/broadcasts/:id/send', authMiddleware, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'invalid_id' });
+
+    // Pre-flight: broadcast exists?
+    const r = await pool.query('SELECT * FROM broadcasts WHERE id = $1', [id]);
+    const broadcast = r.rows[0];
+    if (!broadcast) return res.status(404).json({ error: 'broadcast_not_found' });
+    if (broadcast.status === 'sending') {
+      return res.status(409).json({ error: 'already_sending', message: 'Эта рассылка уже отправляется' });
+    }
+
+    // Pre-flight: recipients?
+    const users = await getBroadcastUsers(broadcast.segment);
+    if (users.length === 0) {
+      console.warn(`⚠️ /broadcasts/${id}/send → 0 recipients for segment "${broadcast.segment}"`);
+      return res.status(400).json({
+        error: 'no_recipients',
+        message: 'Список получателей пуст для выбранного сегмента',
+        segment: broadcast.segment,
+        recipients: 0
+      });
+    }
+
     await updateBroadcast(id, { status: 'sending' });
 
+    // Background dispatch — admin gets immediate sync response with the count.
     sendBroadcast(id).then(result => {
-      console.log(`Broadcast ${id} sent:`, result);
+      console.log(`Broadcast ${id} done:`, JSON.stringify(result));
+      logEvent('broadcast_dispatch_complete', null, { id, ...result });
     }).catch(err => {
-      console.error(`Broadcast ${id} error:`, err);
+      console.error(`Broadcast ${id} dispatcher error:`, err.message, err.stack);
       updateBroadcast(id, { status: 'error' });
+      logEvent('broadcast_dispatch_error', null, { id, error: err.message });
     });
 
-    res.json({ status: 'sending' });
+    res.json({
+      status: 'sending',
+      recipients: users.length,
+      segment: broadcast.segment,
+      has_image: !!broadcast.image_url
+    });
   } catch (err) {
-    console.error('Broadcast send error:', err.message);
-    res.status(500).json({ error: 'Failed to send broadcast' });
+    console.error('Broadcast send error:', err.message, err.stack);
+    res.status(500).json({ error: 'failed_to_send_broadcast', message: err.message });
+  }
+});
+
+// 🧪 TEST broadcast: send to ONE specific chat_id (admin's own Telegram)
+// before hitting the whole list. Returns sync result so admin sees image
+// validation / parse_mode / keyboard issues immediately.
+router.post('/broadcasts/:id/test', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'invalid_id' });
+
+    let chatId = req.body && (req.body.chat_id ?? req.body.chatId);
+    if (!chatId && process.env.OWNER_TELEGRAM_ID) chatId = process.env.OWNER_TELEGRAM_ID;
+    if (!chatId) {
+      return res.status(400).json({ error: 'chat_id_required', message: 'Укажите chat_id или установите OWNER_TELEGRAM_ID на сервере' });
+    }
+    chatId = parseInt(chatId);
+    if (Number.isNaN(chatId)) return res.status(400).json({ error: 'invalid_chat_id' });
+
+    const result = await sendBroadcastToChat(id, chatId);
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error, image_warning: result.image_warning, chat_id: chatId });
+    }
+    await logEvent('broadcast_test_sent', null, { id, chat_id: chatId, image_warning: result.image_warning });
+    res.json({ ok: true, chat_id: chatId, image_url_used: result.image_url_used, image_warning: result.image_warning });
+  } catch (err) {
+    console.error('Broadcast test error:', err.message, err.stack);
+    res.status(500).json({ error: 'test_failed', message: err.message });
   }
 });
 
