@@ -1381,22 +1381,74 @@ async function sendExitSurvey(telegramId) {
 // ============================================================
 
 /**
- * Normalize public image URLs that Telegram cannot fetch as-is.
- * The most common admin mistake is pasting a Google Drive *view* page
- * (which returns HTML) instead of a direct download URL.
- *   https://drive.google.com/file/d/<ID>/view?usp=sharing  →  https://drive.google.com/uc?export=download&id=<ID>
- *   https://drive.google.com/open?id=<ID>                 →  same
- * Returns the original URL when nothing to fix.
+ * Try to extract a direct image URL from an HTML share-page.
+ * Looks at <meta property="og:image"> first, then twitter:image.
+ * Used for hosts that hand out share URLs by default (ibb.co,
+ * postimg.cc, etc.) where the URL the admin pastes returns HTML.
  */
-function normalizeImageUrl(url) {
+async function extractOgImage(url, timeoutMs = 5000) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 AltynBot/1.0' }
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.includes('text/html') && !ct.includes('xhtml')) return null;
+    const html = (await res.text()).slice(0, 200_000); // cap
+    const m =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
+      html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i);
+    return m && m[1] ? m[1] : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Normalize public image URLs that Telegram cannot fetch as-is.
+ * The most common admin mistakes:
+ *   1) Google Drive view page  →  uc?export=download direct
+ *   2) ibb.co / postimg share  →  resolve via og:image
+ *   3) imgur.com/<id>          →  i.imgur.com/<id>.jpg
+ * Returns the original URL when nothing to fix (or async-resolved one).
+ *
+ * NOTE: async because for HTML-share hosts we need to fetch the page once.
+ *       The result is cached in the broadcasts table on the first send.
+ */
+async function normalizeImageUrl(url) {
   if (!url || typeof url !== 'string') return null;
   const trimmed = url.trim();
   if (!trimmed) return null;
 
+  // ----- Google Drive -----
   let m = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
   m = trimmed.match(/drive\.google\.com\/open\?(?:.*&)?id=([a-zA-Z0-9_-]+)/);
   if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+
+  // ----- ImageBB / Postimg / similar HTML-share hosts -----
+  // Direct (i.ibb.co/..., i.postimg.cc/...) → keep as-is
+  // Share page (ibb.co/<code>, postimg.cc/<code>) → resolve via og:image
+  const shareHosts = [
+    /^https?:\/\/(?:www\.)?ibb\.co\/[A-Za-z0-9_-]+\/?(?:\?.*)?$/i,
+    /^https?:\/\/(?:www\.)?postimg\.cc\/[A-Za-z0-9_-]+\/?(?:\?.*)?$/i,
+    /^https?:\/\/(?:www\.)?freeimage\.host\/i\/[A-Za-z0-9._-]+/i
+  ];
+  if (shareHosts.some(rx => rx.test(trimmed))) {
+    const og = await extractOgImage(trimmed);
+    if (og) return og;
+  }
+
+  // ----- Imgur single image short URL -----
+  m = trimmed.match(/^https?:\/\/(?:www\.)?imgur\.com\/(?!a\/|gallery\/)([a-zA-Z0-9]+)\/?$/);
+  if (m) return `https://i.imgur.com/${m[1]}.jpg`;
 
   return trimmed;
 }
@@ -1464,7 +1516,7 @@ export async function sendBroadcastToChat(broadcastId, chatId) {
   if (!chatId) return { ok: false, error: 'chat_id_required' };
 
   const keyboard = buildBroadcastKeyboard(broadcast.buttons);
-  const normalizedUrl = normalizeImageUrl(broadcast.image_url);
+  const normalizedUrl = await normalizeImageUrl(broadcast.image_url);
 
   let imageWarning = null;
   let imageUrlUsed = normalizedUrl;
@@ -1525,7 +1577,7 @@ export async function sendBroadcast(broadcastId) {
 
   // ---- Pre-flight: normalize + validate image URL ONCE (not per-user) ----
   const keyboard = buildBroadcastKeyboard(broadcast.buttons);
-  const normalizedUrl = normalizeImageUrl(broadcast.image_url);
+  const normalizedUrl = await normalizeImageUrl(broadcast.image_url);
   let imageUrlUsed = normalizedUrl;
   let imageWarning = null;
 

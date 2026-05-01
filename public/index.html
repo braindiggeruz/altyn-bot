@@ -315,7 +315,7 @@
     <div class="modal-header"><span class="modal-title">📤 Новая рассылка</span><button class="modal-close" onclick="closeModal('broadcast-modal')">&times;</button></div>
     <div class="form-group"><label class="form-label">Название</label><input class="form-input" id="bc-title" placeholder="Название рассылки"></div>
     <div class="form-group"><label class="form-label">Текст (Markdown)</label><textarea class="form-textarea" id="bc-content" placeholder="*Жирный*, _курсив_"></textarea></div>
-    <div class="form-group"><label class="form-label">URL изображения</label><input class="form-input" id="bc-image" placeholder="https://..."></div>
+    <div class="form-group"><label class="form-label">URL изображения</label><input class="form-input" id="bc-image" placeholder="https://i.ibb.co/.../file.png   или   drive.google.com/file/d/.../view"><div style="font-size:11px;color:var(--text3);margin-top:4px">Поддерживаются: прямые .jpg/.png, ImageBB (ibb.co), Google Drive «view», Imgur. Перед массой — нажми 🧪 «Тест на меня».</div></div>
     <div class="form-group"><label class="form-label">Сегмент</label>
       <select class="form-select" id="bc-segment" onchange="updateSegmentCount()">
         <option value="all">Все</option><option value="quiz_completed">Прошли квиз</option><option value="warmup_active">На прогреве</option>
