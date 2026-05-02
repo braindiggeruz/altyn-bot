@@ -1327,31 +1327,40 @@ export async function sendTornadoReactivation(opts = {}) {
   // We deliberately also accept 'started' because users who hit /start but
   // never finished the quiz (and went silent for 7+ days) are exactly the
   // cohort TORNADO is designed to recover.
-  const whereParts = [
-    `telegram_id IS NOT NULL`,
-    `funnel_stage IN ('started','quiz','quiz_completed','warmup','booking')`,
-    `(booking_status IS NULL OR booking_status NOT IN ('booked','confirmed','completed'))`,
-    `(exit_reason IS NULL OR exit_reason = '')`,
-    `(tornado_disabled IS NULL OR tornado_disabled = 0)`,
-    `(tornado_day IS NULL OR tornado_day < 30)`,
-    `(tornado_last_sent IS NULL OR tornado_last_sent < NOW() - INTERVAL '23 hours')`,
-    // anti-collision: don't TORNADO a user who got a warmup message in the last 20h
-    `(last_warmup_sent_at IS NULL OR last_warmup_sent_at < NOW() - INTERVAL '20 hours')`,
-    `last_active <= NOW() - INTERVAL '7 days'`
-  ];
-  const params = [];
-  if (Array.isArray(onlyTelegramIds) && onlyTelegramIds.length > 0) {
-    params.push(onlyTelegramIds);
-    // override the inactivity gate when explicitly targeting users (test mode)
-    whereParts[whereParts.length - 1] = `1=1`;
-    whereParts.push(`telegram_id = ANY($${params.length}::bigint[])`);
+  const isTargeted = Array.isArray(onlyTelegramIds) && onlyTelegramIds.length > 0;
+  let sql, params;
+  if (isTargeted) {
+    // Test mode: bypass funnel/booking/dedup gates so we can send to any
+    // explicit ID (typically the admin) regardless of their real state.
+    // We still hard-cap tornado_day <= 30 to avoid index out of range,
+    // but reset to day-1 if the user is at 30 from a previous test.
+    sql = `
+      SELECT * FROM users
+      WHERE telegram_id = ANY($1::bigint[])
+      LIMIT ${safeLimit}
+    `;
+    params = [onlyTelegramIds];
+  } else {
+    const whereParts = [
+      `telegram_id IS NOT NULL`,
+      `funnel_stage IN ('started','quiz','quiz_completed','warmup','booking')`,
+      `(booking_status IS NULL OR booking_status NOT IN ('booked','confirmed','completed'))`,
+      `(exit_reason IS NULL OR exit_reason = '')`,
+      `(tornado_disabled IS NULL OR tornado_disabled = 0)`,
+      `(tornado_day IS NULL OR tornado_day < 30)`,
+      `(tornado_last_sent IS NULL OR tornado_last_sent < NOW() - INTERVAL '23 hours')`,
+      // anti-collision: don't TORNADO a user who got a warmup message in the last 20h
+      `(last_warmup_sent_at IS NULL OR last_warmup_sent_at < NOW() - INTERVAL '20 hours')`,
+      `last_active <= NOW() - INTERVAL '7 days'`
+    ];
+    sql = `
+      SELECT * FROM users
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY last_active ASC
+      LIMIT ${safeLimit}
+    `;
+    params = [];
   }
-  const sql = `
-    SELECT * FROM users
-    WHERE ${whereParts.join(' AND ')}
-    ORDER BY last_active ASC
-    LIMIT ${safeLimit}
-  `;
 
   let result;
   try {
@@ -1391,7 +1400,9 @@ export async function sendTornadoReactivation(opts = {}) {
   const details = [];
 
   for (const user of candidates) {
-    const currentDay = user.tornado_day || 0;
+    let currentDay = user.tornado_day || 0;
+    // Targeted/test mode: if user already finished all 30 days, restart from day 1
+    if (isTargeted && currentDay >= 30) currentDay = 0;
     const nextDay = currentDay + 1;
     const msg = TORNADO_MESSAGES[nextDay - 1];
     if (!msg) { skipped++; continue; }
