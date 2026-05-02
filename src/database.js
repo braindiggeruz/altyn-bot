@@ -642,7 +642,7 @@ export const getCohortData = async () => {
       COUNT(*) as total,
       SUM(CASE WHEN scenario IS NOT NULL THEN 1 ELSE 0 END) as quiz_completed,
       SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked,
-      ROUND(CAST(SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100, 1) as conversion_rate
+      ROUND((SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) * 100)::numeric, 1) as conversion_rate
     FROM users
     WHERE created_at >= NOW() - INTERVAL '12 weeks'
     GROUP BY cohort_week

@@ -1591,7 +1591,7 @@ export async function sendTornadoReactivation(opts = {}) {
   } else {
     const whereParts = [
       `telegram_id IS NOT NULL`,
-      `funnel_stage IN ('started','quiz','quiz_completed','warmup','booking')`,
+      `funnel_stage IN ('started','quiz','quiz_completed','warmup')`,
       `(booking_status IS NULL OR booking_status NOT IN ('booked','confirmed','completed'))`,
       `(exit_reason IS NULL OR exit_reason = '')`,
       `(tornado_disabled IS NULL OR tornado_disabled = 0)`,

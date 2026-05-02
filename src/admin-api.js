@@ -680,7 +680,7 @@ router.get('/analytics/conversion-by-source', authMiddleware, async (req, res) =
              COUNT(*) as total,
              SUM(CASE WHEN scenario IS NOT NULL THEN 1 ELSE 0 END) as quiz_done,
              SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) as booked,
-             ROUND(CAST(SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100, 1) as conversion_rate
+             ROUND((SUM(CASE WHEN booking_status = 'booked' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) * 100)::numeric, 1) as conversion_rate
       FROM users
       GROUP BY source
       ORDER BY conversion_rate DESC
