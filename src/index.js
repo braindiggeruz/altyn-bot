@@ -132,10 +132,11 @@ async function startApp() {
     app.post('/admin/tornado/run-batch', async (req, res) => {
       if (!requireSecret(req, res)) return;
       const limit = Math.min(Math.max(parseInt(req.query.limit || '5', 10) || 5, 1), 500);
-      const r = await runOnce(`manual:tornado:batch:${limit}`, () => sendTornadoReactivation({
-        limit, source: 'batch'
+      const minIdleDays = req.query.min_idle_days !== undefined ? parseInt(req.query.min_idle_days, 10) : 7;
+      const r = await runOnce(`manual:tornado:batch:${limit}:${minIdleDays}`, () => sendTornadoReactivation({
+        limit, minIdleDays, source: 'batch'
       }));
-      res.json({ ok: true, limit, result: r });
+      res.json({ ok: true, limit, minIdleDays, result: r });
     });
 
     // v5.0: Conversion-machine ops endpoints.

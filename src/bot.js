@@ -551,6 +551,117 @@ export function initBot(token, app) {
       return;
     }
 
+    // ---- TORNADO v5.1: instant per-segment quick breakdown (lead magnet) ----
+    if (data.startsWith('tornado_quickbreak_d')) {
+      const day = parseInt(data.replace('tornado_quickbreak_d', ''), 10) || 0;
+      const u = await getUser(chatId);
+      const seg = u?.tornado_segment || u?.scenario || 'generic';
+      await applyTornadoClick({ telegramId: chatId, kind: 'more', day, dayType: 'quickbreak', callbackData: data });
+      const QUICK = {
+        savior: `🎁 *Мини-разбор: сценарий «Спасатель»*
+
+Главная иллюзия: «Меня полюбят за то, что я нужна».
+Корень: в детстве чувство ценности было привязано к «помогать маме / быть удобной». Любовь = сделка.
+
+Что вы делаете автоматически:
+— спасаете партнёров, которые «вот-вот изменятся»;
+— чувствуете вину, когда отдыхаете;
+— устаёте, но не разрешаете себе слабость;
+— окружены людьми, которые берут — и не дают.
+
+Что НЕ работает:
+«Поставь себя на первое место» — пустая фраза, если внутри стоит запрет.
+
+Что работает:
+В трансе мы возвращаемся к маленькой «вам» 4–5 лет, которая впервые решила: «Меня услышат, только если я помогу». И *её* учим, что любовь не нужно зарабатывать.
+
+После 1 сессии: впервые без вины сказать «нет».
+После 3-х: построить отношения, где вас выбирают, а не используют.`,
+        fear: `🎁 *Мини-разбор: сценарий «Страх»*
+
+Главная иллюзия: «Если я буду готова ко всему — со мной не случится плохого».
+Корень: нервная система запомнила «расслабляться опасно». Чаще всего — из ситуации, где взрослые были непредсказуемы.
+
+Что вы делаете автоматически:
+— просыпаетесь с тревогой;
+— катастрофизируете будущее;
+— перепроверяете всё (плита, замок, сообщения);
+— не можете «просто радоваться» — внутри ждёте подвоха.
+
+Что НЕ работает:
+Медитация и дыхательные практики дают спокойствие на час. Антидепрессанты приглушают, но не лечат.
+
+Что работает:
+В трансе мы находим *конкретный момент*, где страх «включился» — и завершаем его. Тело наконец-то «выдыхает». Это не теория — это телесный сдвиг.
+
+После 1 сессии: первый за годы спокойный сон.
+После 3-х: тревога снижается на 60–80%.`,
+        control: `🎁 *Мини-разбор: сценарий «Контроль»*
+
+Главная иллюзия: «Если я отпущу — всё рухнет».
+Корень: в детстве вас не защищали — и вы стали *сами себе родителем* слишком рано. Контроль — это броня выжившего.
+
+Что вы делаете автоматически:
+— расписываете всё на 3 шага вперёд;
+— перфекционизм во всём — от еды до отношений;
+— гневаетесь, когда «не по-вашему»;
+— не доверяете партнёру / детям / коллегам делать «как они умеют».
+
+Что НЕ работает:
+«Просто отпусти» — бесполезно говорить тому, кто без контроля разваливается.
+
+Что работает:
+В трансе мы показываем *телу*, что сейчас безопасно — что взрослая «вы» на месте. Контроль расслабляется *сам*, без принуждения.
+
+После 1 сессии: первое за годы ощущение «я могу не контролировать всё».
+После 3-х: близкие говорят «ты как будто другая — мягче».`,
+        freeze: `🎁 *Мини-разбор: сценарий «Замирание»*
+
+Главная иллюзия: «Я ленивая / слабохарактерная».
+Корень: НЕ лень. Это застывший страх. В детстве была ситуация, где нельзя было ни драться, ни бежать → тело выбрало *замереть*.
+
+Что вы делаете автоматически:
+— знаете, что нужно сделать — но не делаете;
+— «откладываете на потом» важное;
+— на стрессе выпадаете в апатию или диссоциацию;
+— обвиняете себя в «слабохарактерности».
+
+Что НЕ работает:
+Сила воли. Тайм-менеджмент. «Соберись». Это не про волю — это про *неотреагированный страх в теле*.
+
+Что работает:
+В трансе мы возвращаемся к моменту, где тело замерло, и *доделываем* реакцию — даём ему то движение, которое тогда было невозможно. Тело выдыхает. Появляется действие.
+
+После 1 сессии: впервые за годы — реальное движение в делах, которые «висели».
+После 3-х: прокрастинация уходит на 70%+.`,
+        generic: `🎁 *Мини-разбор: ваш сценарий*
+
+Любая повторяющаяся боль — отношения, тревога, контроль, апатия — имеет один корень: *решение, принятое в детстве* в момент, когда было больно.
+
+Это решение жило вне вашего ведома. Оно защищало вас тогда. И ограничивает сейчас.
+
+Гипнотерапия делает 3 вещи:
+1. Находит *то самое* решение (часто за 1 сессию).
+2. Возвращает мозг в состояние, где оно было принято (тета-волна, естественная).
+3. Перепрокладывает «нейронное шоссе» — мягко, без боли.
+
+Это не магия и не эзотерика. Это нейропсихология + эриксоновский транс.
+
+После 1 сессии: 90% клиенток говорят «я не ожидала, что станет так понятно».`
+      };
+      const text = QUICK[seg] || QUICK.generic;
+      await bot.sendMessage(chatId, text, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [{ text: '📅 Записаться на бесплатную диагностику', callback_data: `tornado_book_d${day}` }],
+          [{ text: '💬 Задать вопрос Алтын',                    callback_data: `tornado_ask_d${day}` }]
+        ] }
+      }).catch(async () => {
+        await bot.sendMessage(chatId, text.replace(/[*_`]/g, ''));
+      });
+      return;
+    }
+
     // ---- TORNADO v5.0: per-day callback buttons ----
     // Pattern: tornado_<kind>_d<N>  where kind ∈ yes|no|more|book|later|ask|read
     if (data.startsWith('tornado_') && data !== 'tornado_stop' && /^tornado_(yes|no|more|book|later|ask|read)_d\d+/.test(data)) {
@@ -1454,8 +1565,9 @@ export async function sendReminders() {
 // Returns: { candidates, considered, sent, failed, blocked, skipped, reasons[], details[] }
 // ============================================================
 export async function sendTornadoReactivation(opts = {}) {
-  const { dryRun = false, limit = 50, onlyTelegramIds = null, source = 'cron' } = opts;
+  const { dryRun = false, limit = 50, onlyTelegramIds = null, source = 'cron', minIdleDays = 7 } = opts;
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
+  const safeIdle = Math.max(0, Math.min(Number(minIdleDays), 90));
 
   // Master kill switch — set TORNADO_ENABLED=0 in Railway env to pause all sends.
   // dry-run and explicit-target test sends still work for diagnostics.
@@ -1487,7 +1599,7 @@ export async function sendTornadoReactivation(opts = {}) {
       `(tornado_day IS NULL OR tornado_day < 30)`,
       `(tornado_last_sent IS NULL OR tornado_last_sent < NOW() - INTERVAL '23 hours')`,
       `(last_warmup_sent_at IS NULL OR last_warmup_sent_at < NOW() - INTERVAL '20 hours')`,
-      `last_active <= NOW() - INTERVAL '7 days'`
+      `last_active <= NOW() - INTERVAL '${safeIdle} days'`
     ];
     sql = `
       SELECT * FROM users
@@ -1552,6 +1664,10 @@ export async function sendTornadoReactivation(opts = {}) {
     const keyboard = { inline_keyboard: [] };
     if (dayDef.primary)   keyboard.inline_keyboard.push([{ text: dayDef.primary.text,   callback_data: dayDef.primary.cb }]);
     if (dayDef.secondary) keyboard.inline_keyboard.push([{ text: dayDef.secondary.text, callback_data: dayDef.secondary.cb }]);
+    // v5.1: persistent lead-magnet button on every non-rest day
+    if (dayDef.type !== 'rest') {
+      keyboard.inline_keyboard.push([{ text: '🎁 Бесплатный мини-разбор твоего сценария за 5 мин', callback_data: `tornado_quickbreak_d${nextDay}` }]);
+    }
     if (dayDef.type !== 'rest' && !keyboard.inline_keyboard.some(row => row.some(b => b.callback_data === 'tornado_stop'))) {
       keyboard.inline_keyboard.push([{ text: '🛑 Не беспокоить', callback_data: 'tornado_stop' }]);
     }
