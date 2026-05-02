@@ -131,11 +131,85 @@ async function startApp() {
     });
     app.post('/admin/tornado/run-batch', async (req, res) => {
       if (!requireSecret(req, res)) return;
-      const limit = Math.min(Math.max(parseInt(req.query.limit || '5', 10) || 5, 1), 100);
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '5', 10) || 5, 1), 500);
       const r = await runOnce(`manual:tornado:batch:${limit}`, () => sendTornadoReactivation({
         limit, source: 'batch'
       }));
       res.json({ ok: true, limit, result: r });
+    });
+
+    // v5.0: Conversion-machine ops endpoints.
+    app.get('/admin/tornado/stats', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      try {
+        const { pool } = await import('./database.js');
+        const overall = await pool.query(`
+          SELECT
+            COUNT(*) FILTER (WHERE tornado_day BETWEEN 1 AND 30) AS in_pipeline,
+            COUNT(*) FILTER (WHERE tornado_day = 30) AS completed,
+            COUNT(*) FILTER (WHERE tornado_disabled = 1) AS unsubscribed,
+            COUNT(*) FILTER (WHERE booking_status IN ('booked','confirmed','completed')) AS booked,
+            COUNT(*) FILTER (WHERE tornado_score >= 50) AS hot_leads,
+            COALESCE(SUM(tornado_click_count), 0) AS total_clicks,
+            COALESCE(SUM(tornado_reply_count), 0) AS total_replies
+          FROM users
+        `);
+        const byDay = await pool.query(`
+          SELECT tornado_day, COUNT(*) AS users
+          FROM users WHERE tornado_day BETWEEN 1 AND 30
+          GROUP BY tornado_day ORDER BY tornado_day
+        `);
+        const bySegment = await pool.query(`
+          SELECT COALESCE(tornado_segment, 'generic') AS seg, COUNT(*) AS users,
+                 AVG(tornado_score)::numeric(10,2) AS avg_score
+          FROM users WHERE tornado_day > 0
+          GROUP BY 1 ORDER BY 2 DESC
+        `);
+        const events = await pool.query(`
+          SELECT event_type, COUNT(*) AS n
+          FROM analytics_events
+          WHERE event_type LIKE 'tornado_%' AND created_at >= NOW() - INTERVAL '30 days'
+          GROUP BY 1 ORDER BY 2 DESC
+        `);
+        const ctr = await pool.query(`
+          SELECT
+            (SELECT COUNT(*) FROM analytics_events WHERE event_type='tornado_sent' AND created_at >= NOW() - INTERVAL '30 days') AS sent,
+            (SELECT COUNT(*) FROM analytics_events WHERE event_type='tornado_click' AND created_at >= NOW() - INTERVAL '30 days') AS clicks,
+            (SELECT COUNT(*) FROM analytics_events WHERE event_type='tornado_reply' AND created_at >= NOW() - INTERVAL '30 days') AS replies
+        `);
+        const top = await pool.query(`
+          SELECT telegram_id, first_name, username, tornado_segment, tornado_day, tornado_score,
+                 tornado_click_count, tornado_reply_count, tornado_disabled, booking_status,
+                 last_tornado_click, last_tornado_reply
+          FROM users WHERE tornado_score > 0
+          ORDER BY tornado_score DESC LIMIT 25
+        `);
+        res.json({
+          ok: true,
+          overall: overall.rows[0],
+          ctr_30d: ctr.rows[0],
+          by_day: byDay.rows,
+          by_segment: bySegment.rows,
+          events_30d: events.rows,
+          top_engaged: top.rows,
+          tornado_enabled: process.env.TORNADO_ENABLED !== '0'
+        });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+
+    app.post('/admin/tornado/pause-all', (req, res) => {
+      if (!requireSecret(req, res)) return;
+      // Soft pause: set TORNADO_ENABLED=0 in process env. Survives until next restart;
+      // for permanent pause, also set the Railway env var to '0'.
+      process.env.TORNADO_ENABLED = '0';
+      res.json({ ok: true, paused: true, note: 'In-process. For persistent pause set Railway env TORNADO_ENABLED=0.' });
+    });
+    app.post('/admin/tornado/resume', (req, res) => {
+      if (!requireSecret(req, res)) return;
+      process.env.TORNADO_ENABLED = '1';
+      res.json({ ok: true, paused: false });
     });
 
     // Quick smoke test: dispatch a test message to NOTIFY_GROUP_ID + OWNER_TELEGRAM_ID.

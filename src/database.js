@@ -79,6 +79,23 @@ export async function initDatabase() {
       // v4.9.2: TORNADO unsubscribe / kill-switch flag (separate from exit_reason
       // so admin/broadcast and quiz exit reasons stay independent of "do not warm me").
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_disabled INTEGER DEFAULT 0`,
+      // v4.9.3: Conversion-machine TORNADO — segmentation + scoring + tracking.
+      // Each column is independently nullable/defaultable, so an old row keeps
+      // behaving like 'generic, score 0, never clicked, never paused'.
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_segment TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_variant TEXT DEFAULT 'A'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_score INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_tornado_click TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_tornado_reply TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_click_count INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_reply_count INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_paused_until TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_started_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_hot_notified INTEGER DEFAULT 0`,
+      // Backfill segment from quiz scenario for existing users (idempotent).
+      `UPDATE users SET tornado_segment = scenario WHERE tornado_segment IS NULL AND scenario IN ('savior','fear','control','freeze')`,
+      `UPDATE users SET tornado_segment = 'generic' WHERE tornado_segment IS NULL`,
+      `CREATE INDEX IF NOT EXISTS idx_users_tornado_segment ON users (tornado_segment, tornado_disabled, tornado_paused_until)`,
       // v4.8.0: Per-channel last-sent tracking (decouples warmup/reminder/tornado timings from updated_at)
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_warmup_sent_at TIMESTAMP`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_quiz_reminder_2h_at TIMESTAMP`,
