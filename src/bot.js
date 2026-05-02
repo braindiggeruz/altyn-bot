@@ -553,7 +553,7 @@ export function initBot(token, app) {
     // ---- TORNADO stop ----
     if (data === 'tornado_stop') {
       await pool.query(
-        `UPDATE users SET tornado_day = 30, exit_reason = 'tornado_stop' WHERE telegram_id = $1`,
+        `UPDATE users SET tornado_day = 30, tornado_disabled = 1, exit_reason = 'tornado_stop' WHERE telegram_id = $1`,
         [chatId]
       );
       await logEvent('tornado_stopped', chatId, {});
@@ -622,6 +622,41 @@ export function initBot(token, app) {
     console.log(`📩 Message received from ${chatId}: ${msg.text?.substring(0, 50)}`);
     const user = await getUser(chatId);
     if (!user) return;
+
+    // ---- v4.9.2: TORNADO / warmup text-based unsubscribe ----
+    // User-typed stop words bypass the booking state-machine and immediately
+    // disable proactive outreach. We do NOT wipe other data (booking, scenario,
+    // referral attribution) — only the warm-up channels.
+    {
+      const t = msg.text.trim().toLowerCase();
+      const stopWords = [
+        'стоп', 'stop', 'отписаться', 'отписка', 'unsubscribe',
+        'хватит', 'не писать', 'не пиши', 'отстань', 'убрать рассылку',
+        'не беспокоить', 'no spam', 'остановить рассылку'
+      ];
+      const isStop = stopWords.some(w => t === w || t.startsWith(w + ' ') || t.endsWith(' ' + w) || t.includes(' ' + w + ' '));
+      if (isStop) {
+        await pool.query(
+          `UPDATE users SET tornado_disabled = 1, warmup_active = 0, tornado_day = 30,
+            exit_reason = COALESCE(NULLIF(exit_reason,''), 'user_stop')
+            WHERE telegram_id = $1`,
+          [chatId]
+        );
+        await logEvent('tornado_unsubscribed', chatId, { trigger: 'text', message: t.slice(0, 60) });
+        await logMessage(chatId, 'in', 'unsubscribe', msg.text);
+        await bot.sendMessage(chatId,
+          '✅ Поняла. Больше не буду беспокоить рассылками.\n\nЕсли передумаете — напишите мне или запишитесь напрямую.',
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+              ]
+            }
+          }
+        ).catch(() => {});
+        return;
+      }
+    }
 
     // ---- BOOKING FLOW: State machine approach ----
     if (user.funnel_stage === 'booking') {
@@ -1264,39 +1299,102 @@ export async function sendReminders() {
 
 // ============================================================
 // 🌪️ TORNADO REACTIVATION — 30-day reactivation chain
-// v4.8.0: Robust image resolution with explicit fallback to text-only,
-// rate-limit-safe send, dedup via tornado_last_sent (already in SQL),
-// telemetry, and atomic counter advance.
+// v4.9.2: dry-run + test mode + batch limit + tornado_disabled kill-switch
+//   + warmup-collision guard + smart counter advance (only burn a day on
+//   successful send or terminal-block; soft errors keep the day for retry).
 // ============================================================
-export async function sendTornadoReactivation() {
-  if (!bot) return { sent: 0, failed: 0 };
+//
+// Options:
+//   dryRun        — true → no send, no DB write, just return candidate list
+//   limit         — max users this run (default 50, cap 100)
+//   onlyTelegramIds — array of TG ids; restricts query to these users only
+//   source        — string label for logging ('cron'|'manual'|'test'|'batch')
+//
+// Returns: { candidates, considered, sent, failed, blocked, skipped, reasons[], details[] }
+// ============================================================
+export async function sendTornadoReactivation(opts = {}) {
+  const { dryRun = false, limit = 50, onlyTelegramIds = null, source = 'cron' } = opts;
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 100));
+
+  if (!bot) {
+    console.warn(`🌪️ TORNADO[${source}]: bot not initialized`);
+    return { sent: 0, failed: 0, candidates: 0, considered: 0, blocked: 0, skipped: 0, error: 'bot_not_ready' };
+  }
+
+  // ---- Build query: shared eligibility predicate ----
+  // The handoff schema is the source of truth: funnel_stage / last_active /
+  // booking_status / telegram_id / tornado_day / tornado_last_sent.
+  // We deliberately also accept 'started' because users who hit /start but
+  // never finished the quiz (and went silent for 7+ days) are exactly the
+  // cohort TORNADO is designed to recover.
+  const whereParts = [
+    `telegram_id IS NOT NULL`,
+    `funnel_stage IN ('started','quiz','quiz_completed','warmup','booking')`,
+    `(booking_status IS NULL OR booking_status NOT IN ('booked','confirmed','completed'))`,
+    `(exit_reason IS NULL OR exit_reason = '')`,
+    `(tornado_disabled IS NULL OR tornado_disabled = 0)`,
+    `(tornado_day IS NULL OR tornado_day < 30)`,
+    `(tornado_last_sent IS NULL OR tornado_last_sent < NOW() - INTERVAL '23 hours')`,
+    // anti-collision: don't TORNADO a user who got a warmup message in the last 20h
+    `(last_warmup_sent_at IS NULL OR last_warmup_sent_at < NOW() - INTERVAL '20 hours')`,
+    `last_active <= NOW() - INTERVAL '7 days'`
+  ];
+  const params = [];
+  if (Array.isArray(onlyTelegramIds) && onlyTelegramIds.length > 0) {
+    params.push(onlyTelegramIds);
+    // override the inactivity gate when explicitly targeting users (test mode)
+    whereParts[whereParts.length - 1] = `1=1`;
+    whereParts.push(`telegram_id = ANY($${params.length}::bigint[])`);
+  }
+  const sql = `
+    SELECT * FROM users
+    WHERE ${whereParts.join(' AND ')}
+    ORDER BY last_active ASC
+    LIMIT ${safeLimit}
+  `;
 
   let result;
   try {
-    result = await pool.query(`
-      SELECT * FROM users
-      WHERE funnel_stage IN ('quiz_completed', 'warmup')
-      AND (booking_status IS NULL OR booking_status = 'none')
-      AND (exit_reason IS NULL OR exit_reason = '')
-      AND last_active <= NOW() - INTERVAL '7 days'
-      AND (tornado_day IS NULL OR tornado_day < 30)
-      AND (tornado_last_sent IS NULL OR tornado_last_sent < NOW() - INTERVAL '23 hours')
-      ORDER BY last_active ASC
-      LIMIT 100
-    `);
+    result = await pool.query(sql, params);
   } catch (e) {
-    console.error('🌪️ TORNADO SQL error:', e.message);
-    return { sent: 0, failed: 0 };
+    console.error(`🌪️ TORNADO[${source}] SQL error:`, e.message);
+    return { sent: 0, failed: 0, candidates: 0, considered: 0, blocked: 0, skipped: 0, error: e.message };
   }
 
-  console.log(`🌪️ TORNADO: ${result.rows.length} users due for reactivation`);
-  let sent = 0, failed = 0;
+  const candidates = result.rows;
+  console.log(`🌪️ TORNADO[${source}]: ${candidates.length} candidates (limit=${safeLimit}, dryRun=${dryRun})`);
 
-  for (const user of result.rows) {
+  // ---- DRY RUN: just describe what would happen, never write or send ----
+  if (dryRun) {
+    const details = candidates.map(u => ({
+      telegram_id: Number(u.telegram_id),
+      first_name: u.first_name || null,
+      username: u.username || null,
+      funnel_stage: u.funnel_stage,
+      booking_status: u.booking_status,
+      tornado_day_current: u.tornado_day || 0,
+      tornado_day_next: (u.tornado_day || 0) + 1,
+      last_active: u.last_active,
+      last_warmup_sent_at: u.last_warmup_sent_at
+    }));
+    console.log(`🌪️ TORNADO[${source}] DRY RUN candidates:`, JSON.stringify(details.slice(0, 10)));
+    return {
+      dryRun: true,
+      candidates: candidates.length,
+      considered: candidates.length,
+      sent: 0, failed: 0, blocked: 0, skipped: 0,
+      details
+    };
+  }
+
+  let sent = 0, failed = 0, blocked = 0, skipped = 0;
+  const details = [];
+
+  for (const user of candidates) {
     const currentDay = user.tornado_day || 0;
     const nextDay = currentDay + 1;
     const msg = TORNADO_MESSAGES[nextDay - 1];
-    if (!msg) continue;
+    if (!msg) { skipped++; continue; }
 
     const keyboard = {
       inline_keyboard: [
@@ -1324,6 +1422,12 @@ export async function sendTornadoReactivation() {
           parse_mode: 'Markdown',
           reply_markup: keyboard
         });
+        // If markdown is the culprit, plain-text rescue
+        if (!sendRes.ok && sendRes.error !== 'blocked' && /parse|entities/i.test(sendRes.error || '')) {
+          sendRes = await sendSafe('sendMessage', user.telegram_id, msg.text, {
+            reply_markup: keyboard
+          });
+        }
       }
     } else {
       if (msg.image) console.warn(`🌪️ TORNADO image missing on disk: ${imgPath}, sending text only`);
@@ -1331,28 +1435,63 @@ export async function sendTornadoReactivation() {
         parse_mode: 'Markdown',
         reply_markup: keyboard
       });
+      if (!sendRes.ok && sendRes.error !== 'blocked' && /parse|entities/i.test(sendRes.error || '')) {
+        sendRes = await sendSafe('sendMessage', user.telegram_id, msg.text, {
+          reply_markup: keyboard
+        });
+      }
     }
 
-    // Always advance counter + stamp tornado_last_sent so the same user is not
-    // retried within 23 hours, even if delivery failed.
-    await pool.query(
-      `UPDATE users SET tornado_day = $1, tornado_last_sent = NOW() WHERE telegram_id = $2`,
-      [nextDay, user.telegram_id]
-    );
+    const errMsg = sendRes.error || '';
+    const isBlocked = sendRes.error === 'blocked';
+    const isChatNotFound = /chat not found/i.test(errMsg);
+    // Only advance the day counter on success OR terminal/permanent failures
+    // (so a transient 400 doesn't burn day-1 content for a user we'll keep retrying).
+    const advanceDay = sendRes.ok || isBlocked || isChatNotFound;
 
-    if (sendRes.ok) {
+    if (advanceDay) {
+      await pool.query(
+        `UPDATE users SET tornado_day = $1, tornado_last_sent = NOW() WHERE telegram_id = $2`,
+        [nextDay, user.telegram_id]
+      );
+    } else {
+      // Stamp last_sent to respect 23h dedup window even on soft failure,
+      // but keep tornado_day as-is so the same content retries tomorrow.
+      await pool.query(
+        `UPDATE users SET tornado_last_sent = NOW() WHERE telegram_id = $1`,
+        [user.telegram_id]
+      );
+    }
+
+    if (isBlocked) {
+      blocked++;
+      // sendSafe → handleBlockedUser already disabled warmup. Also disable TORNADO.
+      await pool.query(
+        `UPDATE users SET tornado_disabled = 1 WHERE telegram_id = $1`,
+        [user.telegram_id]
+      );
+      await logEvent('tornado_blocked', user.telegram_id, { day: nextDay });
+      details.push({ telegram_id: Number(user.telegram_id), day: nextDay, status: 'blocked' });
+      console.log(`🚫 TORNADO Day ${nextDay} → ${user.telegram_id} BLOCKED`);
+    } else if (sendRes.ok) {
       sent++;
-      await logEvent('tornado_sent', user.telegram_id, { day: nextDay });
-      console.log(`✅ TORNADO Day ${nextDay} → ${user.telegram_id}`);
+      await logEvent('tornado_sent', user.telegram_id, { day: nextDay, source });
+      details.push({ telegram_id: Number(user.telegram_id), day: nextDay, status: 'sent' });
+      console.log(`✅ TORNADO Day ${nextDay} → ${user.telegram_id} (${source})`);
     } else {
       failed++;
+      await logEvent('tornado_failed', user.telegram_id, { day: nextDay, error: errMsg.slice(0, 200) });
+      details.push({ telegram_id: Number(user.telegram_id), day: nextDay, status: 'failed', error: errMsg.slice(0, 120) });
+      console.warn(`❌ TORNADO Day ${nextDay} → ${user.telegram_id} failed: ${errMsg}`);
     }
 
-    await sleep(300);
+    await sleep(700); // ≥500ms per Telegram global rate-limit guidance
   }
 
-  console.log(`✅ TORNADO done: sent=${sent}, failed=${failed}`);
-  return { sent, failed };
+  const stats = { source, candidates: candidates.length, considered: candidates.length, sent, failed, blocked, skipped, dryRun: false };
+  console.log(`✅ TORNADO[${source}] done:`, JSON.stringify(stats));
+  await logEvent('tornado_run_done', null, stats);
+  return { ...stats, details };
 }
 
 // ============================================================

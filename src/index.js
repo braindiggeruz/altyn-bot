@@ -98,8 +98,44 @@ async function startApp() {
     });
     app.post('/admin/trigger/tornado', async (req, res) => {
       if (!requireSecret(req, res)) return;
-      const r = await runOnce('manual:tornado', () => sendTornadoReactivation());
+      const r = await runOnce('manual:tornado', () => sendTornadoReactivation({ source: 'manual' }));
       res.json({ ok: true, result: r });
+    });
+
+    // v4.9.2: TORNADO safety endpoints — dry-run, test-to-admin, small-batch.
+    // All three require X-Admin-Secret. NONE of them touch booked/completed users
+    // or users that opted out (tornado_disabled=1 or exit_reason set).
+    //
+    //   POST /admin/tornado/dry-run            — returns candidate list, no DB write, no send
+    //   POST /admin/tornado/test               — sends ONLY to admin (OWNER_TELEGRAM_ID by default,
+    //                                            or ?telegram_id=<ID> override). Live send.
+    //   POST /admin/tornado/run-batch?limit=N  — real send capped at N (1..100, default 5)
+    //
+    app.post('/admin/tornado/dry-run', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 100);
+      const r = await sendTornadoReactivation({ dryRun: true, limit, source: 'dry-run' });
+      res.json({ ok: true, result: r });
+    });
+    app.post('/admin/tornado/test', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const targetParam = req.query.telegram_id || req.body?.telegram_id || process.env.OWNER_TELEGRAM_ID;
+      const targetId = parseInt(targetParam, 10);
+      if (!targetId) return res.status(400).json({ ok: false, error: 'no telegram_id (set OWNER_TELEGRAM_ID or pass ?telegram_id=)' });
+      const r = await runOnce(`manual:tornado:test:${targetId}`, () => sendTornadoReactivation({
+        onlyTelegramIds: [targetId],
+        limit: 1,
+        source: 'test'
+      }));
+      res.json({ ok: true, target: targetId, result: r });
+    });
+    app.post('/admin/tornado/run-batch', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '5', 10) || 5, 1), 100);
+      const r = await runOnce(`manual:tornado:batch:${limit}`, () => sendTornadoReactivation({
+        limit, source: 'batch'
+      }));
+      res.json({ ok: true, limit, result: r });
     });
 
     // Quick smoke test: dispatch a test message to NOTIFY_GROUP_ID + OWNER_TELEGRAM_ID.

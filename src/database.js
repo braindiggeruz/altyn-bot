@@ -76,6 +76,9 @@ export async function initDatabase() {
       // v4.3.0: TORNADO reactivation
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_day INTEGER DEFAULT 0`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_last_sent TIMESTAMP`,
+      // v4.9.2: TORNADO unsubscribe / kill-switch flag (separate from exit_reason
+      // so admin/broadcast and quiz exit reasons stay independent of "do not warm me").
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_disabled INTEGER DEFAULT 0`,
       // v4.8.0: Per-channel last-sent tracking (decouples warmup/reminder/tornado timings from updated_at)
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_warmup_sent_at TIMESTAMP`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_quiz_reminder_2h_at TIMESTAMP`,
