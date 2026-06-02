@@ -17,8 +17,12 @@ import {
 import { sendBroadcast, sendBroadcastToChat } from './bot.js';
 
 const router = express.Router();
-// FIX v4.7.0: Use stable fallback secret instead of random (tokens survive restarts)
-const JWT_SECRET = process.env.JWT_SECRET || 'altyn_jwt_stable_secret_2024_production_key';
+// SECURITY v5.2: JWT_SECRET MUST come from env. No fallback — any fallback in source code lets
+// anyone forge admin JWTs. Require >= 32 chars to keep entropy reasonable. Fail-fast.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET env var missing or shorter than 32 chars — refusing to start admin API.');
+}
 
 // Apply security headers
 router.use(helmet({ contentSecurityPolicy: false }));

@@ -22,13 +22,12 @@ const PORT = process.env.PORT || 4000;
 
 // Global bot instance will be set by initBot()
 
-// FIX: Restrict CORS to known origins
-const allowedOrigins = [
-  'https://altyn-bot-production.up.railway.app',
-  'https://altyn-therapy.uz',
-  'http://localhost:3000',
-  'http://localhost:4000'
-];
+// SECURITY v5.2: CORS origins are now env-driven (CORS_ORIGINS=comma-separated).
+// Removed the hardcoded Railway origin. Falls back to the public hostnames.
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://altyn-therapy.uz,https://admin.altyn-therapy.uz,https://bot.altyn-therapy.uz')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -52,8 +51,13 @@ async function startApp() {
     await initDatabase();
     console.log('✅ Database ready');
 
-    // Init Telegram bot (webhook in production, polling in dev)
-    const BOT_TOKEN = process.env.BOT_TOKEN || '8698863140:AAEZE-iDU9T9RkUwmtl00SvVzY0srM1woqw';
+    // SECURITY v5.2: BOT_TOKEN MUST come from env. No hardcoded fallback —
+    // a leaked production token in git history led to revocation. Fail-fast.
+    const BOT_TOKEN = process.env.BOT_TOKEN;
+    if (!BOT_TOKEN || !/^\d+:[A-Za-z0-9_-]{30,}$/.test(BOT_TOKEN)) {
+      console.error('❌ FATAL: BOT_TOKEN env var missing or malformed. Refusing to start.');
+      process.exit(1);
+    }
     const botInstance = initBot(BOT_TOKEN, app);
     // Make sure bot is available globally for cron jobs
     setBot(botInstance);
@@ -61,7 +65,8 @@ async function startApp() {
     // API routes
     app.use('/api', adminRouter);
 
-    // Debug endpoint - last errors
+    // SECURITY v5.2: /debug is gated behind ADMIN_TRIGGER_SECRET — it leaks stack traces and
+    // memory layout. Fail-closed when secret not configured.
     const errorLog = [];
     const MAX_ERRORS = 50;
     global.__addError = (source, msg, stack) => {
@@ -69,6 +74,9 @@ async function startApp() {
       if (errorLog.length > MAX_ERRORS) errorLog.length = MAX_ERRORS;
     };
     app.get('/debug', (req, res) => {
+      const expected = process.env.ADMIN_TRIGGER_SECRET;
+      if (!expected) return res.status(503).json({ error: 'ADMIN_TRIGGER_SECRET not set on server' });
+      if (req.get('X-Admin-Secret') !== expected) return res.status(401).json({ error: 'unauthorized' });
       res.json({
         errors: errorLog,
         uptime: process.uptime(),
@@ -226,23 +234,23 @@ async function startApp() {
       res.json({ ok: true, result: r, env_targets });
     });
 
-    // Health check
-    app.get('/health', (req, res) => {
-      const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-        ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-        : process.env.WEBHOOK_URL || null;
-
-      res.json({
+    // Health check (alias /api/health for compatibility with admin panel)
+    function healthPayload() {
+      const WEBHOOK_URL = process.env.WEBHOOK_URL
+        || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+      return {
         status: 'ok',
-        version: '4.9.1',
+        version: '5.2.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         notify_group: process.env.NOTIFY_GROUP_ID ? 'configured' : 'not set',
         owner_id: process.env.OWNER_TELEGRAM_ID ? 'configured' : 'not set'
-      });
-    });
+      };
+    }
+    app.get('/health', (req, res) => res.json(healthPayload()));
+    app.get('/api/health', (req, res) => res.json(healthPayload()));
 
     // Serve admin panel (catch-all — must be LAST route)
     app.get('*', (req, res) => {

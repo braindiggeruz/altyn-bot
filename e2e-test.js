@@ -113,9 +113,12 @@ async function runTests() {
   let adminToken = null;
 
   await runTest('Admin login returns JWT token', async () => {
+    const username = process.env.E2E_ADMIN_USERNAME || process.env.ADMIN_USERNAME;
+    const password = process.env.E2E_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD;
+    if (!username || !password) throw new Error('Set E2E_ADMIN_USERNAME / E2E_ADMIN_PASSWORD env vars (or ADMIN_USERNAME / ADMIN_PASSWORD) before running e2e tests');
     const res = await axios.post(`${API_URL}/auth/login`, {
-      username: 'admin',
-      password: 'g4FZNUSk2qHgvn7aq2Pc'
+      username,
+      password
     }, { timeout: TEST_CONFIG.timeout });
     assert(res.data.token, 'Token not returned');
     adminToken = res.data.token;

@@ -204,28 +204,45 @@ async function handleBlockedUser(telegramId, err) {
 }
 
 // ============================================================
-// INIT BOT — Webhook mode for Railway, polling for local dev
+// INIT BOT — Webhook mode in production, polling locally
+// SECURITY v5.2: webhook path no longer contains BOT_TOKEN. We use
+// WEBHOOK_SECRET_PATH env (random slug) for the URL, and verify
+// X-Telegram-Bot-Api-Secret-Token on every incoming POST.
 // ============================================================
 export function initBot(token, app) {
-  const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-    : process.env.WEBHOOK_URL || null;
+  const WEBHOOK_URL = process.env.WEBHOOK_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+  const WEBHOOK_SECRET_PATH = process.env.WEBHOOK_SECRET_PATH || '';
+  const TELEGRAM_SECRET_TOKEN = process.env.TELEGRAM_SECRET_TOKEN || '';
 
   if (WEBHOOK_URL) {
-    // ========== WEBHOOK MODE (Production on Railway) ==========
-    console.log(`🔗 Starting bot in WEBHOOK mode: ${WEBHOOK_URL}/bot${token.slice(0, 5)}...`);
+    // ========== WEBHOOK MODE (Production) ==========
+    if (!WEBHOOK_SECRET_PATH || WEBHOOK_SECRET_PATH.length < 16) {
+      console.error('❌ FATAL: WEBHOOK_SECRET_PATH missing or shorter than 16 chars. Refusing to start webhook.');
+      process.exit(1);
+    }
+    console.log(`🔗 Starting bot in WEBHOOK mode: ${WEBHOOK_URL}/tg/******`);
     bot = new TelegramBot(token, { webHook: false });
 
-    const webhookPath = `/bot${token}`;
-    bot.setWebHook(`${WEBHOOK_URL}${webhookPath}`, {
+    const webhookPath = `/tg/${WEBHOOK_SECRET_PATH}`;
+    const setOpts = {
       allowed_updates: ['message', 'callback_query', 'my_chat_member', 'chat_member']
-    })
-      .then(() => console.log('✅ Webhook set successfully (with callback_query)'))
+    };
+    if (TELEGRAM_SECRET_TOKEN) setOpts.secret_token = TELEGRAM_SECRET_TOKEN;
+    bot.setWebHook(`${WEBHOOK_URL}${webhookPath}`, setOpts)
+      .then(() => console.log('✅ Webhook set successfully (path=/tg/****, secret_token=' + (TELEGRAM_SECRET_TOKEN ? 'on' : 'OFF') + ')'))
       .catch(err => console.error('❌ Webhook set error:', err.message));
 
     if (app) {
       app.post(webhookPath, (req, res) => {
         try {
+          // SECURITY v5.2: reject any POST that does not carry the secret header.
+          if (TELEGRAM_SECRET_TOKEN) {
+            const got = req.get('X-Telegram-Bot-Api-Secret-Token');
+            if (got !== TELEGRAM_SECRET_TOKEN) {
+              return res.sendStatus(401);
+            }
+          }
           const body = req.body;
           const updateType = body?.message ? 'message' : body?.callback_query ? 'callback' : 'other';
           const fromId = body?.message?.from?.id || body?.callback_query?.from?.id || 'unknown';
@@ -239,7 +256,7 @@ export function initBot(token, app) {
           res.sendStatus(200); // Always return 200 to prevent Telegram retries
         }
       });
-      console.log(`✅ Webhook route registered at POST ${webhookPath}`);
+      console.log(`✅ Webhook route registered at POST /tg/****`);
     } else {
       console.error('❌ App not provided to initBot! Webhook route NOT registered!');
     }
