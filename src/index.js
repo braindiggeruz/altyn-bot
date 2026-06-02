@@ -329,6 +329,87 @@ async function startApp() {
         .catch(err => console.error(`❌ CRON TORNADO error:`, err.message));
     });
 
+    // ====================================================================
+    // v5.2 — FOLLOWUP cron (T+1h / T+24h / T+72h / T+7d, scenario-tailored)
+    // Driven by users.next_followup_at + users.followup_step. Idempotent.
+    // Skips: paid, booked, archived, no_response, opted-out (tornado_disabled=1).
+    // Manual control via POST /admin/v52/followup/{dry-run,run-batch} (admin secret).
+    // ====================================================================
+    async function runFollowupBatch({ dryRun = false, limit = 50 } = {}) {
+      const { pool } = await import('./database.js');
+      const { pickFollowup } = await import('./altyn-v52-content.js');
+      const due = await pool.query(`
+        SELECT telegram_id, scenario, COALESCE(followup_step, 0) AS followup_step
+        FROM users
+        WHERE next_followup_at IS NOT NULL
+          AND next_followup_at <= NOW()
+          AND COALESCE(tornado_disabled, 0) = 0
+          AND COALESCE(lead_status, 'new') NOT IN ('booked','paid','archived','no_response')
+          AND COALESCE(followup_step, 0) < 4
+        ORDER BY next_followup_at ASC
+        LIMIT $1
+      `, [Math.min(Math.max(limit, 1), 100)]);
+
+      const nextDelaysMs = [3600e3, 86400e3, 86400e3 * 3, 86400e3 * 7]; // 1h, 24h, 72h, 7d
+      const result = { dry_run: dryRun, candidates: due.rows.length, sent: 0, skipped: 0, failed: 0, samples: [] };
+
+      for (const u of due.rows) {
+        const { text, slot, key } = pickFollowup(u.scenario, u.followup_step);
+        if (!text) { result.skipped++; continue; }
+        if (dryRun) {
+          result.samples.push({ telegram_id: u.telegram_id, scenario: u.scenario || null, key, slot, step: u.followup_step });
+          continue;
+        }
+        try {
+          await botInstance.sendMessage(u.telegram_id, text, { parse_mode: 'Markdown' });
+          const nextStep = (u.followup_step || 0) + 1;
+          const nextAt = nextStep < 4 ? new Date(Date.now() + nextDelaysMs[nextStep]) : null;
+          await pool.query(
+            'UPDATE users SET followup_step=$1, last_followup_at=NOW(), next_followup_at=$2 WHERE telegram_id=$3',
+            [nextStep, nextAt, u.telegram_id]
+          );
+          // Log without importing logEvent statically (avoids circular concern)
+          await pool.query(
+            "INSERT INTO analytics_events (event_type, user_telegram_id, data) VALUES ('FollowupSent', $1, $2)",
+            [u.telegram_id, JSON.stringify({ slot, key, step: nextStep })]
+          );
+          result.sent++;
+        } catch (err) {
+          result.failed++;
+          console.warn(`[v52-followup] ${u.telegram_id} failed:`, err.message);
+          // If user blocked the bot, stop poking them.
+          if (err.response?.statusCode === 403 || /blocked/i.test(err.message || '')) {
+            await pool.query('UPDATE users SET tornado_disabled = 1, next_followup_at = NULL WHERE telegram_id = $1', [u.telegram_id]);
+          } else {
+            // Bump next_followup_at by 30 min to avoid hammering the same broken target.
+            await pool.query("UPDATE users SET next_followup_at = NOW() + INTERVAL '30 minutes' WHERE telegram_id = $1", [u.telegram_id]);
+          }
+        }
+      }
+      return result;
+    }
+
+    // Every 15 minutes — drives the four scenario-tailored touches.
+    cron.schedule('*/15 * * * *', () => {
+      runOnce('cron:v52-followup', () => runFollowupBatch({ dryRun: false, limit: 30 }))
+        .then(r => { if (r?.sent || r?.failed) console.log(`✅ [v52-followup]`, JSON.stringify(r)); })
+        .catch(err => console.error(`❌ CRON v52-followup error:`, err.message));
+    });
+
+    // Admin endpoints to test / inspect without sending.
+    app.post('/admin/v52/followup/dry-run', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 100);
+      try { const r = await runFollowupBatch({ dryRun: true, limit }); res.json({ ok: true, result: r }); }
+      catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+    });
+    app.post('/admin/v52/followup/run-batch', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 100);
+      try { const r = await runFollowupBatch({ dryRun: false, limit }); res.json({ ok: true, result: r }); }
+      catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+    });
+
     // 🛡️ STEEL E2E TESTS: Run daily at 04:00 AM Almaty (UTC+5 = 23:00 UTC previous day)
     // Runs BEFORE warmup messages to detect issues early
     //     cron.schedule('0 23 * * *', async () => {

@@ -292,9 +292,11 @@ export function initBot(token, app) {
     let creative = null;
     let adId = null;
     let campaignId = null;
+    let sharedScenarioHint = null;
 
     // v5.2: Smarter deep-link parser. Recognised prefixes (case-insensitive):
     //   ref_<id>                          → referral from existing user
+    //   src_share_<scenario>              → viral share from a friend; preserves scenario hint
     //   src_<channel>_<creative...>       → ad source + creative slug (Meta/IG/FB/TT)
     //   cmp_<campaign>                    → standalone campaign label
     //   ad_<adId>                         → Meta numeric ad id
@@ -306,6 +308,12 @@ export function initBot(token, app) {
         referrerId = param.slice(4);
         source = 'referral';
         utm = { utm_source: 'referral', utm_medium: 'bot', utm_campaign: referrerId };
+      } else if (lc.startsWith('src_share_')) {
+        const sc = param.slice('src_share_'.length);
+        source = 'share';
+        creative = `scenario_${sc}`;
+        sharedScenarioHint = sc;
+        utm = { utm_source: 'share', utm_medium: 'viral', utm_campaign: `scenario_${sc}` };
       } else if (lc.startsWith('src_')) {
         const rest = param.slice(4);
         const [channel, ...creativeParts] = rest.split('_');
@@ -1294,7 +1302,10 @@ async function sendQuizResult(chatId, answers) {
     warmup_day: 0,
     quiz_completed_at: new Date().toISOString(),
     last_warmup_sent_at: null,
-    tornado_segment: scenario
+    tornado_segment: scenario,
+    // v5.2 — queue first scenario-tailored follow-up at T+1h
+    followup_step: 0,
+    next_followup_at: new Date(Date.now() + 3600e3).toISOString()
   });
   await logEvent('quiz_completed', chatId, { scenario, scores });
   await logEvent('ScenarioGenerated', chatId, { scenario });
@@ -1330,6 +1341,11 @@ async function sendQuizResult(chatId, answers) {
   // PLUS a "Написать Алтын напрямую" button. Both paths fire tracking events
   // (callback_data is captured before redirect for the direct one).
   await new Promise(r => setTimeout(r, 1500));
+  // v5.2: result card has 3 CTAs — paid breakdown, direct Алтын, share to a friend (viral loop).
+  const shareText = encodeURIComponent(
+    `Я прошла короткий тест Алтын и получила сценарий — "${result.title?.replace(/^[^A-Za-zА-Яа-я]+/, '') || scenario}". Кажется, это объясняет многое. Попробуй тоже — вдруг откликнется.`
+  );
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent('https://t.me/altyntherapybot?start=src_share_' + scenario)}&text=${shareText}`;
   await bot.sendMessage(
     chatId,
     `${result.cta}\n\nВыберите, как удобнее:`,
@@ -1338,7 +1354,8 @@ async function sendQuizResult(chatId, answers) {
       reply_markup: {
         inline_keyboard: [
           [{ text: '📅 Хочу личный разбор за 10$', callback_data: 'book_diagnostic' }],
-          [{ text: '💬 Написать Алтын напрямую',   callback_data: 'talk_direct' }]
+          [{ text: '💬 Написать Алтын напрямую',   callback_data: 'talk_direct' }],
+          [{ text: '🤍 Поделиться сценарием с подругой', url: shareUrl }]
         ]
       }
     }
