@@ -108,6 +108,113 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
   }
 });
 
+// ============================================================
+// v5.2 — /api/leads — CRM-friendly query with filters + lead score
+// Query params (all optional):
+//   lead_status= new|quiz_started|quiz_completed|booking_intent|booked|contacted|paid|no_response|reactivation|archived
+//   source=     organic|ig|fb|tt|retarg|site|direct|referral|ad|campaign
+//   creative=   slug
+//   scenario=   clarity|hot_cold|strong|savior|distant|no_intimacy|fear|control|freeze
+//   temperature=HOT|WARM|COLD  (server-side computed from leadScore)
+//   limit=      1..200 (default 50)
+//   offset=     0..    (default 0)
+// Returns: { rows: [...], count }
+// ============================================================
+router.get('/leads', authMiddleware, async (req, res) => {
+  try {
+    const { lead_status, source, creative, scenario, temperature, q } = req.query;
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+
+    const where = [];
+    const params = [];
+    let i = 1;
+    if (lead_status) { where.push(`lead_status = $${i++}`); params.push(lead_status); }
+    if (source)      { where.push(`source = $${i++}`);      params.push(source); }
+    if (creative)    { where.push(`creative = $${i++}`);    params.push(creative); }
+    if (scenario)    { where.push(`scenario = $${i++}`);    params.push(scenario); }
+    if (q)           { where.push(`(LOWER(COALESCE(first_name,'')) LIKE $${i} OR LOWER(COALESCE(username,'')) LIKE $${i} OR CAST(telegram_id AS TEXT) LIKE $${i})`); params.push(`%${String(q).toLowerCase()}%`); i++; }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countQ = `SELECT COUNT(*)::int AS c FROM users ${whereSql}`;
+    const rowsQ = `
+      SELECT telegram_id, username, first_name, last_name, phone,
+             scenario, funnel_stage, lead_status, booking_status,
+             source, creative, ad_id, campaign_id, adset, utm_source, utm_medium, utm_campaign, start_param,
+             quiz_started_at, quiz_completed_at, booking_intent_at, booking_confirmed_at,
+             direct_telegram_click_at, direct_telegram_click_count,
+             tornado_segment, tornado_score, tornado_day, tornado_disabled, tornado_paused_until,
+             last_followup_at, next_followup_at, followup_step,
+             paid_at, notes, created_at, last_active
+      FROM users
+      ${whereSql}
+      ORDER BY COALESCE(booking_confirmed_at, booking_intent_at, direct_telegram_click_at, quiz_completed_at, last_active) DESC NULLS LAST
+      LIMIT $${i} OFFSET $${i + 1}`;
+    const { leadScore } = await import('./altyn-v52-content.js');
+
+    const [countR, rowsR] = await Promise.all([
+      pool.query(countQ, params),
+      pool.query(rowsQ, [...params, limit, offset]),
+    ]);
+
+    let rows = rowsR.rows.map(r => {
+      const s = leadScore(r);
+      return { ...r, lead_score: s.score, temperature: s.temperature };
+    });
+    if (temperature) {
+      const t = String(temperature).toUpperCase();
+      rows = rows.filter(r => r.temperature === t);
+    }
+
+    res.json({ count: countR.rows[0].c, rows });
+  } catch (err) {
+    console.error('Leads error:', err.message, err.stack);
+    res.status(500).json({ error: 'Failed to load leads', detail: err.message });
+  }
+});
+
+// v5.2 — Update lead status from admin UI.
+router.patch('/leads/:telegram_id/status', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.telegram_id, 10);
+  const { lead_status, notes } = req.body || {};
+  if (!id) return res.status(400).json({ error: 'telegram_id required' });
+  const allowed = ['new','quiz_started','quiz_completed','booking_intent','booked','contacted','paid','no_response','reactivation','archived'];
+  if (lead_status && !allowed.includes(lead_status)) return res.status(400).json({ error: 'invalid lead_status' });
+  try {
+    const sets = [];
+    const params = [];
+    let i = 1;
+    if (lead_status) { sets.push(`lead_status = $${i++}`); params.push(lead_status); }
+    if (lead_status === 'paid') { sets.push(`paid_at = COALESCE(paid_at, NOW())`); }
+    if (notes != null)         { sets.push(`notes = $${i++}`); params.push(String(notes)); }
+    if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+    params.push(id);
+    await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE telegram_id = $${i}`, params);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Update lead status error:', err.message);
+    res.status(500).json({ error: 'Failed to update', detail: err.message });
+  }
+});
+
+// v5.2 — CRM aggregations: leads by source / creative / scenario / lead_status.
+router.get('/leads/breakdown', authMiddleware, async (req, res) => {
+  try {
+    const sql = `
+      SELECT
+        (SELECT json_agg(row_to_json(t)) FROM (SELECT COALESCE(lead_status,'new') AS k, COUNT(*)::int AS v FROM users GROUP BY 1 ORDER BY v DESC) t) AS by_status,
+        (SELECT json_agg(row_to_json(t)) FROM (SELECT COALESCE(source,'organic') AS k, COUNT(*)::int AS v FROM users GROUP BY 1 ORDER BY v DESC LIMIT 20) t) AS by_source,
+        (SELECT json_agg(row_to_json(t)) FROM (SELECT COALESCE(creative,'(none)') AS k, COUNT(*)::int AS v FROM users WHERE creative IS NOT NULL GROUP BY 1 ORDER BY v DESC LIMIT 20) t) AS by_creative,
+        (SELECT json_agg(row_to_json(t)) FROM (SELECT COALESCE(scenario,'(none)') AS k, COUNT(*)::int AS v FROM users WHERE scenario IS NOT NULL GROUP BY 1 ORDER BY v DESC) t) AS by_scenario
+    `;
+    const r = await pool.query(sql);
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error('Breakdown error:', err.message);
+    res.status(500).json({ error: 'Failed', detail: err.message });
+  }
+});
+
 router.get('/dashboard/funnel', authMiddleware, async (req, res) => {
   try {
     const r = async (q) => parseInt((await pool.query(q)).rows[0]?.c || 0);

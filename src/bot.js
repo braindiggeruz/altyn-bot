@@ -373,6 +373,8 @@ export function initBot(token, app) {
     await logEvent('TelegramLead', chatId, {
       source, creative, ad_id: adId, campaign_id: campaignId, start_param: param || null
     });
+    // Fire Meta CAPI server-side (no-op when META_CAPI_* env not set).
+    fireCapi('TelegramLead', { telegram_id: chatId, source, creative, utm_source: utm.utm_source, utm_campaign: utm.utm_campaign }).catch(() => {});
 
     // Track referral
     if (referrerId) {
@@ -600,6 +602,14 @@ export function initBot(token, app) {
         creative: u?.creative || null,
         scenario: u?.scenario || null
       });
+      fireCapi('DirectTelegramClick', {
+        telegram_id: chatId,
+        source: u?.source || 'organic',
+        creative: u?.creative || null,
+        scenario: u?.scenario || null,
+        utm_source: u?.utm_source,
+        utm_campaign: u?.utm_campaign,
+      }).catch(() => {});
 
       const scenarioTitle = u?.scenario ? (SCENARIO_RESULTS[u.scenario]?.title || u.scenario) : null;
       await bot.sendMessage(
@@ -1096,6 +1106,14 @@ export function initBot(token, app) {
         await logMessage(chatId, 'in', 'booking_time', msg.text);
         await logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
         await logEvent('BookingSubmitted', chatId, { scenario: updatedUser.scenario || null, source: updatedUser.source || 'organic' });
+        fireCapi('BookingSubmitted', {
+          telegram_id: chatId,
+          scenario: updatedUser.scenario || null,
+          source: updatedUser.source || 'organic',
+          creative: updatedUser.creative || null,
+          utm_source: updatedUser.utm_source,
+          utm_campaign: updatedUser.utm_campaign,
+        }).catch(() => {});
         await sendTyping(chatId, 1000);
         const directUrl = process.env.OWNER_DIRECT_URL || 'https://t.me/Altyn2304';
         await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(escapeMd(name)), {
@@ -1108,11 +1126,14 @@ export function initBot(token, app) {
           }
         });
 
-        // AUTO-HANDOFF: Notify admin group with full lead details (v5.2: + source + creative)
+        // AUTO-HANDOFF: Notify admin group with full lead details (v5.2: + source + creative + scoring + recommended_response)
         const scenario = updatedUser.scenario || 'не определён';
         const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
         const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
-        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
+        const { score: leadScoreValue, temperature: leadTemp } = leadScore(updatedUser);
+        const tempEmoji = { HOT: '🔥', WARM: '🌤', COLD: '❄️' }[leadTemp] || '🔥';
+        const firstReply = ownerFirstReply(updatedUser.scenario || 'generic', updatedUser.booking_name);
+        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!* ${tempEmoji} ${leadTemp} (score ${leadScoreValue})\n\n` +
           `👤 *Имя:* ${escapeMd(updatedUser.booking_name)}\n` +
           `📱 *Telegram:* ${escapeMd(uname)}\n` +
           `🆔 *ID:* \`${chatId}\`\n` +
@@ -1124,8 +1145,8 @@ export function initBot(token, app) {
           `${updatedUser.utm_campaign ? `📎 *Кампания:* ${escapeMd(updatedUser.utm_campaign)}\n` : ''}` +
           `${updatedUser.ad_id ? `🆔 *Ad id:* ${escapeMd(updatedUser.ad_id)}\n` : ''}` +
           `\n💵 *Оффер:* личный разбор 60 мин — 10$\n` +
-          `⚡ *Действие:* свяжитесь в течение 30 минут!\n` +
-          `📞 Написать: tg://user?id=${chatId}`;
+          `⚡ *SLA:* ответить в течение 30 минут.\n\n` +
+          `💬 *Рекомендованный первый ответ:*\n_${escapeMd(firstReply)}_`;
 
         await notifyAdmin(ownerMsg, {
           reply_markup: {
@@ -1278,6 +1299,8 @@ async function sendQuizResult(chatId, answers) {
   await logEvent('quiz_completed', chatId, { scenario, scores });
   await logEvent('ScenarioGenerated', chatId, { scenario });
   await logMessage(chatId, 'out', 'quiz_result', scenario);
+  fireCapi('QuizComplete', { telegram_id: chatId, scenario }).catch(() => {});
+  fireCapi('ScenarioGenerated', { telegram_id: chatId, scenario }).catch(() => {});
 
   // v4.9.0: Bullet-proof result delivery — image is optional, full text is sent
   // as its own message so result.text never truncates against the photo caption limit.
