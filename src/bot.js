@@ -25,6 +25,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OWNER_ID = process.env.OWNER_TELEGRAM_ID || null;
 const GROUP_ID = process.env.NOTIFY_GROUP_ID || null;
 
+// v5.2: Owner contact URLs are env-driven. The legacy code hardcoded a WhatsApp number
+// (+7 707…) that does not belong to ALTYN — leaving it visible to users would route
+// hot leads into a dead phone. Default contact is Алтын's direct Telegram.
+const OWNER_DIRECT_URL = process.env.OWNER_DIRECT_URL || 'https://t.me/Altyn2304';
+const OWNER_CONTACT_URL = process.env.OWNER_WA_URL || OWNER_DIRECT_URL;
+const OWNER_CONTACT_BUTTON_TEXT = process.env.OWNER_WA_URL ? '💬 Написать напрямую в Telegram' : '💬 Написать Алтын';
+
 // v4.9.0: Escape Telegram Markdown (legacy mode) special characters in user-supplied text.
 // Without this, a single `_` in a username or `*` in booking_request breaks the entire
 // notifyAdmin message (logged as ETELEGRAM 400 "can't parse entities"), and the lead
@@ -204,28 +211,45 @@ async function handleBlockedUser(telegramId, err) {
 }
 
 // ============================================================
-// INIT BOT — Webhook mode for Railway, polling for local dev
+// INIT BOT — Webhook mode in production, polling locally
+// SECURITY v5.2: webhook path no longer contains BOT_TOKEN. We use
+// WEBHOOK_SECRET_PATH env (random slug) for the URL, and verify
+// X-Telegram-Bot-Api-Secret-Token on every incoming POST.
 // ============================================================
 export function initBot(token, app) {
-  const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-    : process.env.WEBHOOK_URL || null;
+  const WEBHOOK_URL = process.env.WEBHOOK_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+  const WEBHOOK_SECRET_PATH = process.env.WEBHOOK_SECRET_PATH || '';
+  const TELEGRAM_SECRET_TOKEN = process.env.TELEGRAM_SECRET_TOKEN || '';
 
   if (WEBHOOK_URL) {
-    // ========== WEBHOOK MODE (Production on Railway) ==========
-    console.log(`🔗 Starting bot in WEBHOOK mode: ${WEBHOOK_URL}/bot${token.slice(0, 5)}...`);
+    // ========== WEBHOOK MODE (Production) ==========
+    if (!WEBHOOK_SECRET_PATH || WEBHOOK_SECRET_PATH.length < 16) {
+      console.error('❌ FATAL: WEBHOOK_SECRET_PATH missing or shorter than 16 chars. Refusing to start webhook.');
+      process.exit(1);
+    }
+    console.log(`🔗 Starting bot in WEBHOOK mode: ${WEBHOOK_URL}/tg/******`);
     bot = new TelegramBot(token, { webHook: false });
 
-    const webhookPath = `/bot${token}`;
-    bot.setWebHook(`${WEBHOOK_URL}${webhookPath}`, {
+    const webhookPath = `/tg/${WEBHOOK_SECRET_PATH}`;
+    const setOpts = {
       allowed_updates: ['message', 'callback_query', 'my_chat_member', 'chat_member']
-    })
-      .then(() => console.log('✅ Webhook set successfully (with callback_query)'))
+    };
+    if (TELEGRAM_SECRET_TOKEN) setOpts.secret_token = TELEGRAM_SECRET_TOKEN;
+    bot.setWebHook(`${WEBHOOK_URL}${webhookPath}`, setOpts)
+      .then(() => console.log('✅ Webhook set successfully (path=/tg/****, secret_token=' + (TELEGRAM_SECRET_TOKEN ? 'on' : 'OFF') + ')'))
       .catch(err => console.error('❌ Webhook set error:', err.message));
 
     if (app) {
       app.post(webhookPath, (req, res) => {
         try {
+          // SECURITY v5.2: reject any POST that does not carry the secret header.
+          if (TELEGRAM_SECRET_TOKEN) {
+            const got = req.get('X-Telegram-Bot-Api-Secret-Token');
+            if (got !== TELEGRAM_SECRET_TOKEN) {
+              return res.sendStatus(401);
+            }
+          }
           const body = req.body;
           const updateType = body?.message ? 'message' : body?.callback_query ? 'callback' : 'other';
           const fromId = body?.message?.from?.id || body?.callback_query?.from?.id || 'unknown';
@@ -239,7 +263,7 @@ export function initBot(token, app) {
           res.sendStatus(200); // Always return 200 to prevent Telegram retries
         }
       });
-      console.log(`✅ Webhook route registered at POST ${webhookPath}`);
+      console.log(`✅ Webhook route registered at POST /tg/****`);
     } else {
       console.error('❌ App not provided to initBot! Webhook route NOT registered!');
     }
@@ -265,13 +289,48 @@ export function initBot(token, app) {
     let source = 'organic';
     let utm = {};
     let referrerId = null;
+    let creative = null;
+    let adId = null;
+    let campaignId = null;
+    let sharedScenarioHint = null;
 
+    // v5.2: Smarter deep-link parser. Recognised prefixes (case-insensitive):
+    //   ref_<id>                          → referral from existing user
+    //   src_share_<scenario>              → viral share from a friend; preserves scenario hint
+    //   src_<channel>_<creative...>       → ad source + creative slug (Meta/IG/FB/TT)
+    //   cmp_<campaign>                    → standalone campaign label
+    //   ad_<adId>                         → Meta numeric ad id
+    //   <src>_<medium>_<campaign>         → legacy 3-part format (kept for old links)
+    //   anything else                     → stored verbatim as source label
     if (param) {
-      if (param.startsWith('ref_')) {
-        referrerId = param.replace('ref_', '');
+      const lc = param.toLowerCase();
+      if (lc.startsWith('ref_')) {
+        referrerId = param.slice(4);
         source = 'referral';
         utm = { utm_source: 'referral', utm_medium: 'bot', utm_campaign: referrerId };
+      } else if (lc.startsWith('src_share_')) {
+        const sc = param.slice('src_share_'.length);
+        source = 'share';
+        creative = `scenario_${sc}`;
+        sharedScenarioHint = sc;
+        utm = { utm_source: 'share', utm_medium: 'viral', utm_campaign: `scenario_${sc}` };
+      } else if (lc.startsWith('src_')) {
+        const rest = param.slice(4);
+        const [channel, ...creativeParts] = rest.split('_');
+        source = channel || 'ad';
+        creative = creativeParts.join('_') || null;
+        utm = { utm_source: channel, utm_medium: 'ad', utm_campaign: creative };
+      } else if (lc.startsWith('cmp_')) {
+        const cmp = param.slice(4);
+        source = 'campaign';
+        campaignId = cmp;
+        utm = { utm_source: 'ad', utm_medium: 'campaign', utm_campaign: cmp };
+      } else if (lc.startsWith('ad_')) {
+        adId = param.slice(3);
+        source = 'ad';
+        utm = { utm_source: 'ad', utm_medium: 'meta', utm_campaign: adId };
       } else {
+        // Legacy "<src>_<medium>_<campaign>" fallback
         const parts = param.split('_');
         source = parts[0] || 'link';
         utm = { utm_source: parts[0], utm_medium: parts[1], utm_campaign: parts[2] };
@@ -288,16 +347,24 @@ export function initBot(token, app) {
 
     const existingUser = await getUser(chatId);
     const alreadyBooked = existingUser && ['booked', 'confirmed', 'completed'].includes(existingUser.booking_status);
+    const sourcePatch = {
+      start_param: param || null,
+      creative: creative || existingUser?.creative || null,
+      ad_id: adId || existingUser?.ad_id || null,
+      campaign_id: campaignId || existingUser?.campaign_id || null,
+      referred_by: referrerId || undefined,
+      ...utm
+    };
 
     if (alreadyBooked) {
       await updateUser(chatId, {
         last_active: new Date().toISOString(),
-        referred_by: referrerId || undefined,
-        ...utm
+        ...sourcePatch
       });
     } else {
       await updateUser(chatId, {
         funnel_stage: 'started',
+        lead_status: 'new',
         quiz_answers: null,
         quiz_score: 0,
         scenario: null,
@@ -307,10 +374,15 @@ export function initBot(token, app) {
         booking_name: null,
         booking_request: null,
         booking_time: null,
-        referred_by: referrerId || undefined,
-        ...utm
+        ...sourcePatch
       });
     }
+
+    await logEvent('TelegramLead', chatId, {
+      source, creative, ad_id: adId, campaign_id: campaignId, start_param: param || null
+    });
+    // Fire Meta CAPI server-side (no-op when META_CAPI_* env not set).
+    fireCapi('TelegramLead', { telegram_id: chatId, source, creative, utm_source: utm.utm_source, utm_campaign: utm.utm_campaign }).catch(() => {});
 
     // Track referral
     if (referrerId) {
@@ -403,8 +475,10 @@ export function initBot(token, app) {
     // ---- Quiz start ----
     if (data === 'quiz_start') {
       await logEvent('quiz_start', chatId, {});
+      await logEvent('QuizStart', chatId, {});
       await updateUser(chatId, {
         funnel_stage: 'quiz',
+        lead_status: 'quiz_started',
         quiz_answers: JSON.stringify([]),
         quiz_started_at: new Date().toISOString()
       });
@@ -436,6 +510,7 @@ export function initBot(token, app) {
 
       answers.push({ question: qIndex, answer: aIndex });
       await updateUser(chatId, { quiz_answers: JSON.stringify(answers) });
+      await logEvent('QuizAnswer', chatId, { q: qIndex, a: aIndex });
       await removeKeyboard(chatId, messageId);
 
       if (qIndex + 1 < QUIZ_QUESTIONS.length) {
@@ -474,14 +549,15 @@ export function initBot(token, app) {
       return;
     }
 
-    // ---- Book diagnostic ----
+    // ---- Book the paid 10$ diagnostic (callback_data kept as 'book_diagnostic' for
+    // backwards compatibility with existing TORNADO/result messages already in chat) ----
     if (data === 'book_diagnostic') {
       const user = await getUser(chatId);
       if (user && ['booked', 'confirmed', 'completed'].includes(user.booking_status)) {
-        await bot.sendMessage(chatId, '✅ Вы уже записаны на диагностику! Если нужно изменить время — напишите в WhatsApp.', {
+        await bot.sendMessage(chatId, '✅ Вы уже записаны на разбор. Если нужно скорректировать время — напишите Алтын напрямую.', {
           reply_markup: {
             inline_keyboard: [
-              [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+              [{ text: '💬 Написать Алтын напрямую', callback_data: 'talk_direct' }]
             ]
           }
         });
@@ -489,6 +565,8 @@ export function initBot(token, app) {
       }
       await updateUser(chatId, {
         funnel_stage: 'booking',
+        lead_status: 'booking_intent',
+        booking_intent_at: new Date().toISOString(),
         booking_name: null,
         booking_request: null,
         booking_time: null,
@@ -496,10 +574,91 @@ export function initBot(token, app) {
       });
       await removeKeyboard(chatId, messageId);
       const name = user?.first_name || '';
-      await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
-        parse_mode: 'Markdown'
-      });
+      await bot.sendMessage(
+        chatId,
+        `📝 *Личный разбор сценария — 60 минут онлайн, 10$*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)\n\n_Это нужно, чтобы Алтын подготовилась именно к вам._`,
+        { parse_mode: 'Markdown' }
+      );
+      await logEvent('BookingIntent', chatId, {});
       await logEvent('booking_start', chatId, {});
+      return;
+    }
+
+    // ---- Talk to Алтын directly (hot lead path) ----
+    // Tracks DirectTelegramClick first, then opens t.me/Altyn2304 as a regular link
+    // (Telegram sends the callback, our handler stamps the user, then the user taps
+    // the next button which is a real URL — captured intent is preserved).
+    if (data === 'talk_direct') {
+      const u = await getUser(chatId);
+      const alreadyClicked = !!(u && u.direct_telegram_click_at);
+      const directUrl = process.env.OWNER_DIRECT_URL || 'https://t.me/Altyn2304';
+      // Stamp first click + increment counter, never downgrade booking_intent → quiz_completed.
+      const patch = {
+        direct_telegram_click_count: (u?.direct_telegram_click_count || 0) + 1,
+        last_active: new Date().toISOString()
+      };
+      if (!alreadyClicked) patch.direct_telegram_click_at = new Date().toISOString();
+      // If the user is still in early funnel, mark them as warm/booking_intent so admin sees it.
+      if (!u || ['new', 'quiz_started', 'quiz_completed'].includes(u.lead_status || 'new')) {
+        patch.lead_status = 'booking_intent';
+        if (!u?.booking_intent_at) patch.booking_intent_at = new Date().toISOString();
+      }
+      await updateUser(chatId, patch);
+      await logEvent('DirectTelegramClick', chatId, {
+        first: !alreadyClicked,
+        source: u?.source || 'organic',
+        creative: u?.creative || null,
+        scenario: u?.scenario || null
+      });
+      fireCapi('DirectTelegramClick', {
+        telegram_id: chatId,
+        source: u?.source || 'organic',
+        creative: u?.creative || null,
+        scenario: u?.scenario || null,
+        utm_source: u?.utm_source,
+        utm_campaign: u?.utm_campaign,
+      }).catch(() => {});
+
+      const scenarioTitle = u?.scenario ? (SCENARIO_RESULTS[u.scenario]?.title || u.scenario) : null;
+      await bot.sendMessage(
+        chatId,
+        '💬 Откроется личный чат с Алтын. Можно просто написать пару слов о себе — она ответит лично.',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '➡️ Открыть чат с Алтын', url: directUrl }]
+            ]
+          }
+        }
+      );
+
+      // Hot-lead admin notification — fires only on FIRST direct click to keep group clean.
+      if (!alreadyClicked) {
+        try {
+          const uname = u?.username ? `@${u.username}` : 'нет username';
+          await notifyAdmin(
+            '⚡️ *DIRECT TELEGRAM CLICK*\n\n' +
+            `👤 *Имя:* ${escapeMd(u?.first_name || '—')}\n` +
+            `📱 *Telegram:* ${escapeMd(uname)}\n` +
+            `🆔 *ID:* \`${chatId}\`\n` +
+            (scenarioTitle ? `🎭 *Сценарий:* ${escapeMd(scenarioTitle)}\n` : '') +
+            `📊 *Источник:* ${escapeMd(u?.source || 'organic')}\n` +
+            (u?.creative ? `🎨 *Креатив:* ${escapeMd(u.creative)}\n` : '') +
+            (u?.utm_campaign ? `📎 *Кампания:* ${escapeMd(u.utm_campaign)}\n` : '') +
+            '\n_Пользователь нажал «Написать Алтын напрямую». Ждёт личного сообщения._\n' +
+            `📞 ${escapeMd('tg://user?id=' + chatId)}`,
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }]
+                ]
+              }
+            }
+          );
+        } catch (e) {
+          console.error('notifyAdmin (talk_direct) failed:', e.message);
+        }
+      }
       return;
     }
 
@@ -706,7 +865,7 @@ export function initBot(token, app) {
             reply_markup: {
               inline_keyboard: [
                 [{ text: '📅 Записаться на диагностику', callback_data: `tornado_book_d${day}` }],
-                [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+                [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
               ]
             }
           }).catch(async () => {
@@ -775,11 +934,11 @@ export function initBot(token, app) {
       await bot.sendMessage(chatId,
         `✅ Поняла. Больше не буду беспокоить.
 
-Если передумаете — напишите мне любое сообщение или запишитесь через WhatsApp. 🙏`,
+Если передумаете — напишите мне любое сообщение или запишитесь напрямую в Telegram. 🙏`,
         {
           reply_markup: {
             inline_keyboard: [
-              [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+              [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
             ]
           }
         }
@@ -800,7 +959,7 @@ export function initBot(token, app) {
           reply_markup: {
             inline_keyboard: [
               [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
-              [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+              [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
             ]
           }
         });
@@ -862,7 +1021,7 @@ export function initBot(token, app) {
           {
             reply_markup: {
               inline_keyboard: [
-                [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+                [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
               ]
             }
           }
@@ -946,29 +1105,43 @@ export function initBot(token, app) {
         await updateUser(chatId, {
           booking_time: msg.text.trim(),
           booking_status: 'booked',
-          funnel_stage: 'booked'
+          funnel_stage: 'booked',
+          lead_status: 'booked',
+          booking_confirmed_at: new Date().toISOString()
         });
         const updatedUser = await getUser(chatId);
         const name = updatedUser.booking_name || updatedUser.first_name || 'друг';
         await logMessage(chatId, 'in', 'booking_time', msg.text);
         await logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
+        await logEvent('BookingSubmitted', chatId, { scenario: updatedUser.scenario || null, source: updatedUser.source || 'organic' });
+        fireCapi('BookingSubmitted', {
+          telegram_id: chatId,
+          scenario: updatedUser.scenario || null,
+          source: updatedUser.source || 'organic',
+          creative: updatedUser.creative || null,
+          utm_source: updatedUser.utm_source,
+          utm_campaign: updatedUser.utm_campaign,
+        }).catch(() => {});
         await sendTyping(chatId, 1000);
+        const directUrl = process.env.OWNER_DIRECT_URL || 'https://t.me/Altyn2304';
         await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(escapeMd(name)), {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '🎁 Пригласить друга (скидка 10%)', callback_data: 'get_referral' }],
-              [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
-              [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
+              [{ text: '💬 Написать Алтын напрямую', url: directUrl }],
+              [{ text: '🎁 Пригласить подругу (скидка)', callback_data: 'get_referral' }]
             ]
           }
         });
 
-        // AUTO-HANDOFF: Notify admin group with full lead details
+        // AUTO-HANDOFF: Notify admin group with full lead details (v5.2: + source + creative + scoring + recommended_response)
         const scenario = updatedUser.scenario || 'не определён';
         const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
         const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
-        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
+        const { score: leadScoreValue, temperature: leadTemp } = leadScore(updatedUser);
+        const tempEmoji = { HOT: '🔥', WARM: '🌤', COLD: '❄️' }[leadTemp] || '🔥';
+        const firstReply = ownerFirstReply(updatedUser.scenario || 'generic', updatedUser.booking_name);
+        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!* ${tempEmoji} ${leadTemp} (score ${leadScoreValue})\n\n` +
           `👤 *Имя:* ${escapeMd(updatedUser.booking_name)}\n` +
           `📱 *Telegram:* ${escapeMd(uname)}\n` +
           `🆔 *ID:* \`${chatId}\`\n` +
@@ -976,9 +1149,12 @@ export function initBot(token, app) {
           `📝 *Запрос:* ${escapeMd(updatedUser.booking_request)}\n` +
           `📅 *Время:* ${escapeMd(msg.text)}\n` +
           `📊 *Источник:* ${escapeMd(updatedUser.source || 'organic')}\n` +
+          `${updatedUser.creative ? `🎨 *Креатив:* ${escapeMd(updatedUser.creative)}\n` : ''}` +
           `${updatedUser.utm_campaign ? `📎 *Кампания:* ${escapeMd(updatedUser.utm_campaign)}\n` : ''}` +
-          `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
-          `📞 Написать: tg://user?id=${chatId}`;
+          `${updatedUser.ad_id ? `🆔 *Ad id:* ${escapeMd(updatedUser.ad_id)}\n` : ''}` +
+          `\n💵 *Оффер:* личный разбор 60 мин — 10$\n` +
+          `⚡ *SLA:* ответить в течение 30 минут.\n\n` +
+          `💬 *Рекомендованный первый ответ:*\n_${escapeMd(firstReply)}_`;
 
         await notifyAdmin(ownerMsg, {
           reply_markup: {
@@ -1010,7 +1186,7 @@ export function initBot(token, app) {
       '/book — Записаться на диагностику\n' +
       '/referral — Пригласить друга\n' +
       '/help — Помощь\n\n' +
-      '💬 WhatsApp: +7 707 719 85 61', {
+      '💬 Связаться с Алтын в Telegram', {
       parse_mode: 'Markdown'
     });
   });
@@ -1089,9 +1265,16 @@ async function sendQuizQuestion(chatId, index) {
 
 // ============================================================
 // QUIZ RESULT CALCULATOR
+// v5.2: extended to 6 new scenarios (clarity, hot_cold, strong, distant, no_intimacy)
+// + legacy 4 (savior, fear, control, freeze) kept so older question banks still resolve.
+// Booking CTA reflects the paid 10$ 60-min breakdown and gives a "direct Telegram" path
+// for hot leads that don't want a multi-step form.
 // ============================================================
 async function sendQuizResult(chatId, answers) {
-  const scores = { savior: 0, fear: 0, control: 0, freeze: 0 };
+  const scores = {
+    clarity: 0, hot_cold: 0, strong: 0, distant: 0, no_intimacy: 0,
+    savior: 0, fear: 0, control: 0, freeze: 0
+  };
 
   for (const a of answers) {
     const q = QUIZ_QUESTIONS[a.question];
@@ -1106,7 +1289,7 @@ async function sendQuizResult(chatId, answers) {
   const result = SCENARIO_RESULTS[scenario];
 
   if (!result) {
-    await bot.sendMessage(chatId, '⚠️ Произошла ошибка при расчёте результата. Попробуйте /start');
+    await bot.sendMessage(chatId, '⚠️ Не получилось определить сценарий. Можно начать заново — /start');
     return;
   }
 
@@ -1114,32 +1297,34 @@ async function sendQuizResult(chatId, answers) {
     scenario,
     quiz_score: JSON.stringify(scores),
     funnel_stage: 'quiz_completed',
+    lead_status: 'quiz_completed',
     warmup_active: 1,
     warmup_day: 0,
     quiz_completed_at: new Date().toISOString(),
-    last_warmup_sent_at: null
+    last_warmup_sent_at: null,
+    tornado_segment: scenario,
+    // v5.2 — queue first scenario-tailored follow-up at T+1h
+    followup_step: 0,
+    next_followup_at: new Date(Date.now() + 3600e3).toISOString()
   });
   await logEvent('quiz_completed', chatId, { scenario, scores });
+  await logEvent('ScenarioGenerated', chatId, { scenario });
   await logMessage(chatId, 'out', 'quiz_result', scenario);
+  fireCapi('QuizComplete', { telegram_id: chatId, scenario }).catch(() => {});
+  fireCapi('ScenarioGenerated', { telegram_id: chatId, scenario }).catch(() => {});
 
-  // v4.9.0: Bullet-proof result delivery — multi-stage fallback so the user
-  // ALWAYS sees their result, even if the image is missing, the photo upload
-  // times out, the caption is too long, or markdown parsing fails.
-  // Telegram caption limit is 1024 chars — sending the full result.text as a
-  // caption silently truncates and may break parse_mode.
+  // v4.9.0: Bullet-proof result delivery — image is optional, full text is sent
+  // as its own message so result.text never truncates against the photo caption limit.
   try {
     const imgKey = result.image || scenario;
     const imgPath = path.resolve(__dirname, '..', 'assets', `result_${imgKey}.png`);
-    let imageSent = false;
     if (fs.existsSync(imgPath)) {
       try {
         await bot.sendPhoto(chatId, imgPath, { caption: result.title || '' });
-        imageSent = true;
       } catch (photoErr) {
         console.error(`sendPhoto failed for ${chatId}, falling back to text-only:`, photoErr.message);
       }
     }
-    // Always send the full text as a separate message so result.text is never lost.
     try {
       await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
     } catch (mdErr) {
@@ -1149,52 +1334,72 @@ async function sendQuizResult(chatId, answers) {
   } catch (err) {
     console.error('Error sending result image+text:', err.message);
     if (global.__addError) global.__addError('quiz_result', err.message, err.stack);
-    try {
-      await bot.sendMessage(chatId, result.text);
-    } catch(e) {}
+    try { await bot.sendMessage(chatId, result.text); } catch(e) {}
   }
 
-  // Send CTA after result
-  await new Promise(r => setTimeout(r, 2000));
-  await bot.sendMessage(chatId, `🔑 *Что дальше?*\n\nТеперь, когда вы знаете свой сценарий, вы можете:\n\n1️⃣ Записаться на *бесплатную диагностику* — я помогу разобраться глубже\n2️⃣ Получать полезные материалы по вашему сценарию\n\n_Диагностика длится 30 минут и проходит онлайн_`, {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '📝 Записаться на бесплатную диагностику', callback_data: 'book_diagnostic' }],
-        [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
-        [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
-      ]
-    }
-  });
-
-  // Notify admin about quiz completion — full lead card
-  const user = await getUser(chatId);
-  const uname = user?.username ? `@${user.username}` : 'нет username';
-  const scenarioEmoji = { savior: '🛡', fear: '💔', control: '🎯', freeze: '❄️' }[scenario] || '🎭';
-  const scenarioTitle = result.title || scenario;
-  const scoreStr = Object.entries(scores)
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(' | ');
-
-  notifyAdmin(
-    `🧠 *Новый лид прошёл квиз!*\n\n` +
-    `👤 *Имя:* ${escapeMd(user?.first_name || 'Аноним')} ${escapeMd(user?.last_name || '')}`.trim() + `\n` +
-    `📱 *Telegram:* ${escapeMd(uname)}\n` +
-    `🆔 *ID:* \`${chatId}\`\n` +
-    `${scenarioEmoji} *Сценарий:* ${escapeMd(scenarioTitle)}\n` +
-    `📊 *Баллы:* ${scoreStr}\n` +
-    `📅 *Время:* ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Almaty' })}\n\n` +
-    `💡 _Человек видит результат и кнопку записи прямо сейчас!_`,
+  // v5.2: replace the legacy "бесплатная диагностика" CTA with the paid 10$ flow
+  // PLUS a "Написать Алтын напрямую" button. Both paths fire tracking events
+  // (callback_data is captured before redirect for the direct one).
+  await new Promise(r => setTimeout(r, 1500));
+  // v5.2: result card has 3 CTAs — paid breakdown, direct Алтын, share to a friend (viral loop).
+  const shareText = encodeURIComponent(
+    `Я прошла короткий тест Алтын и получила сценарий — "${result.title?.replace(/^[^A-Za-zА-Яа-я]+/, '') || scenario}". Кажется, это объясняет многое. Попробуй тоже — вдруг откликнется.`
+  );
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent('https://t.me/altyntherapybot?start=src_share_' + scenario)}&text=${shareText}`;
+  await bot.sendMessage(
+    chatId,
+    `${result.cta}\n\nВыберите, как удобнее:`,
     {
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }],
-          [{ text: '📝 Открыть CRM', url: 'https://altyn-bot-production.up.railway.app' }]
+          [{ text: '📅 Хочу личный разбор за 10$', callback_data: 'book_diagnostic' }],
+          [{ text: '💬 Написать Алтын напрямую',   callback_data: 'talk_direct' }],
+          [{ text: '🤍 Поделиться сценарием с подругой', url: shareUrl }]
         ]
       }
     }
   );
+
+  // Notify admin about quiz completion — full lead card
+  try {
+    const user = await getUser(chatId);
+    const uname = user?.username ? `@${user.username}` : 'нет username';
+    const scenarioEmoji = {
+      savior: '🤲', fear: '💔', control: '🎯', freeze: '❄️',
+      clarity: '🧭', hot_cold: '🌊', strong: '🏔', distant: '🚪', no_intimacy: '🕯'
+    }[scenario] || '🎭';
+    const scenarioTitle = result.title || scenario;
+    const scoreStr = Object.entries(scores)
+      .sort((a, b) => b[1] - a[1])
+      .filter(([, v]) => v > 0)
+      .slice(0, 4)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(' | ');
+
+    await notifyAdmin(
+      `🧠 *Новый лид прошёл квиз*\n\n` +
+      `👤 *Имя:* ${escapeMd((user?.first_name || 'Аноним') + ' ' + (user?.last_name || '')).trim()}\n` +
+      `📱 *Telegram:* ${escapeMd(uname)}\n` +
+      `🆔 *ID:* \`${chatId}\`\n` +
+      `${scenarioEmoji} *Сценарий:* ${escapeMd(scenarioTitle)}\n` +
+      `📊 *Баллы:* ${escapeMd(scoreStr)}\n` +
+      `📊 *Источник:* ${escapeMd(user?.source || 'organic')}\n` +
+      `${user?.creative ? `🎨 *Креатив:* ${escapeMd(user.creative)}\n` : ''}` +
+      `${user?.utm_campaign ? `📎 *Кампания:* ${escapeMd(user.utm_campaign)}\n` : ''}` +
+      `📅 *Время:* ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}\n\n` +
+      `_Человек видит результат и две кнопки: «Хочу разбор за 10$» и «Написать Алтын напрямую»._`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📞 Написать клиенту', url: `tg://user?id=${chatId}` }]
+          ]
+        }
+      }
+    );
+  } catch (e) {
+    console.error('notifyAdmin (quiz_completed) failed:', e.message);
+  }
 }
 
 // ============================================================
@@ -1248,7 +1453,7 @@ export async function sendWarmupMessages() {
     const keyboard = nextDay >= 5 ? {
       inline_keyboard: [
         [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
-        [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+        [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
       ]
     } : undefined;
 
@@ -1415,7 +1620,7 @@ export async function sendReminders() {
         reply_markup: {
           inline_keyboard: [
             [{ text: '📝 Продолжить запись', callback_data: 'continue_booking' }],
-            [{ text: '💬 Написать в WhatsApp', url: 'https://wa.me/77077198561' }]
+            [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
           ]
         }
       }
@@ -1442,7 +1647,7 @@ export async function sendReminders() {
         reply_markup: {
           inline_keyboard: [
             [{ text: '📝 Записаться сейчас', callback_data: 'book_diagnostic' }],
-            [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
+            [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
           ]
         }
       }
@@ -1466,11 +1671,11 @@ export async function sendReminders() {
       const name = escapeMd(user.booking_name || user.first_name || 'друг');
       const time = escapeMd(user.booking_time || 'запланированное время');
       return {
-        text: `🔔 *Напоминание о диагностике*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nДиагностика пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите в WhatsApp, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
+        text: `🔔 *Напоминание о диагностике*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nДиагностика пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите напрямую в Telegram, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
         options: {
           parse_mode: 'Markdown',
           reply_markup: {
-            inline_keyboard: [[{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }]]
+            inline_keyboard: [[{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]]
           }
         }
       };
@@ -1503,7 +1708,7 @@ export async function sendReminders() {
           reply_markup: {
             inline_keyboard: [
               [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
-              [{ text: '💬 Написать в WhatsApp', url: 'https://wa.me/77077198561' }]
+              [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
             ]
           }
         }
@@ -1528,8 +1733,7 @@ export async function sendReminders() {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '💬 Написать Алтын', url: 'https://wa.me/77077198561' }],
-            [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
+            [{ text: OWNER_CONTACT_BUTTON_TEXT, url: OWNER_CONTACT_URL }]
           ]
         }
       }

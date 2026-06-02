@@ -185,6 +185,7 @@
     <nav class="nav">
       <div class="nav-section">Главное</div>
       <div class="nav-item active" data-page="dashboard"><i class="fas fa-chart-line"></i> Дашборд</div>
+      <div class="nav-item" data-page="leads"><i class="fas fa-fire-alt"></i> Лиды (v5.2)</div>
       <div class="nav-item" data-page="funnel"><i class="fas fa-filter"></i> Воронка</div>
       <div class="nav-item" data-page="analytics"><i class="fas fa-chart-bar"></i> Аналитика</div>
       <div class="nav-section">Управление</div>
@@ -269,6 +270,26 @@
     <section class="section" id="page-templates">
       <div class="page-header"><h2>📝 Шаблоны</h2><button class="btn btn-gold" onclick="showModal('template-modal')"><i class="fas fa-plus"></i> Новый</button></div>
       <div class="panel" id="templates-list"></div>
+    </section>
+
+    <!-- LEADS v5.2 -->
+    <section class="section" id="page-leads">
+      <div class="page-header">
+        <div><h2>🔥 Лиды</h2><p style="color:var(--text3);font-size:13px;margin-top:4px">Источник, сценарий, температура и следующий шаг — одним экраном</p></div>
+        <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="loadLeadsBreakdown()"><i class="fas fa-chart-pie"></i> Сводка</button><button class="btn btn-outline" onclick="loadLeads()"><i class="fas fa-sync-alt"></i> Обновить</button></div>
+      </div>
+      <div class="stats-grid" id="leads-breakdown-cards" style="margin-bottom:16px"></div>
+      <div class="panel" style="margin-bottom:16px;padding:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
+          <input class="form-input" id="lf-q" placeholder="🔍 имя / @user / id" onkeyup="if(event.key==='Enter')loadLeads()">
+          <select class="form-select" id="lf-temperature" onchange="loadLeads()"><option value="">Все 🌡</option><option value="HOT">🔥 HOT</option><option value="WARM">🌤 WARM</option><option value="COLD">❄️ COLD</option></select>
+          <select class="form-select" id="lf-status" onchange="loadLeads()"><option value="">Все статусы</option><option value="new">new</option><option value="quiz_started">quiz_started</option><option value="quiz_completed">quiz_completed</option><option value="booking_intent">booking_intent</option><option value="booked">booked</option><option value="contacted">contacted</option><option value="paid">paid</option><option value="no_response">no_response</option><option value="reactivation">reactivation</option><option value="archived">archived</option></select>
+          <select class="form-select" id="lf-scenario" onchange="loadLeads()"><option value="">Все сценарии</option><option value="clarity">🧭 clarity</option><option value="hot_cold">🌊 hot_cold</option><option value="strong">🏔 strong</option><option value="savior">🤲 savior</option><option value="distant">🚪 distant</option><option value="no_intimacy">🕯 no_intimacy</option><option value="fear">💔 fear (legacy)</option><option value="control">🎯 control (legacy)</option><option value="freeze">❄️ freeze (legacy)</option></select>
+          <input class="form-input" id="lf-source" placeholder="source" onchange="loadLeads()">
+          <input class="form-input" id="lf-creative" placeholder="creative" onchange="loadLeads()">
+        </div>
+      </div>
+      <div class="panel"><div id="leads-table"></div></div>
     </section>
 
     <!-- UTM -->
@@ -410,6 +431,8 @@ function setupNav(){
       document.getElementById(`page-${p}`).classList.add('active');
       document.querySelector('.sidebar').classList.remove('open');
       const L={dashboard:loadDashboard,funnel:loadFunnel,analytics:loadAnalytics,users:loadUsers,broadcasts:loadBroadcasts,
+        templates:loadTemplates,utm:loadUtm,referrals:loadReferrals,'ab-testing':loadAbTesting,heatmap:loadHeatmap,cohorts:loadCohorts,'exit-survey':loadExitSurvey,
+        leads: ()=>{loadLeads();loadLeadsBreakdown();}};
         templates:loadTemplates,utm:loadUtmLinks,referrals:loadReferrals,heatmap:loadHeatmap,cohorts:loadCohorts,'exit-survey':loadExitSurvey,'ab-testing':loadAbTests};
       if(L[p])L[p]();
     });
@@ -763,6 +786,73 @@ function copyText(t){
     const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);
     a.select();document.execCommand('copy');document.body.removeChild(a);toast('Скопировано!');
   });
+}
+
+// ============================================================
+// LEADS v5.2 — uses /api/leads, /api/leads/breakdown, PATCH /api/leads/:id/status
+// ============================================================
+function tempBadge(t){const m={HOT:'🔥 HOT',WARM:'🌤 WARM',COLD:'❄️ COLD'};return `<span class="badge" style="background:${t==='HOT'?'#fee2e2':t==='WARM'?'#fef3c7':'#e5e7eb'};color:#111;padding:2px 8px;border-radius:6px;font-size:11px">${m[t]||t}</span>`;}
+function statusBadge(s){const colors={paid:'#10b981',booked:'#3b82f6',booking_intent:'#f59e0b',quiz_completed:'#8b5cf6',quiz_started:'#a78bfa',contacted:'#06b6d4',no_response:'#9ca3af',new:'#6b7280',reactivation:'#ec4899',archived:'#d1d5db'};return `<span class="badge" style="background:${colors[s]||'#6b7280'};color:white;padding:2px 8px;border-radius:6px;font-size:11px">${s||'new'}</span>`;}
+function fmtDate(d){if(!d)return '—';const x=new Date(d);return x.toLocaleString('ru-RU',{timeZone:'Asia/Tashkent',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
+async function loadLeads(){
+  const params = new URLSearchParams();
+  const q=document.getElementById('lf-q')?.value; if(q)params.set('q',q);
+  const t=document.getElementById('lf-temperature')?.value; if(t)params.set('temperature',t);
+  const s=document.getElementById('lf-status')?.value; if(s)params.set('lead_status',s);
+  const sc=document.getElementById('lf-scenario')?.value; if(sc)params.set('scenario',sc);
+  const src=document.getElementById('lf-source')?.value; if(src)params.set('source',src);
+  const cr=document.getElementById('lf-creative')?.value; if(cr)params.set('creative',cr);
+  params.set('limit','100');
+  const r=await fetch(`${API}/leads?${params}`,{headers:{Authorization:`Bearer ${TOKEN}`}});
+  if(!r.ok){document.getElementById('leads-table').innerHTML='<p style="padding:24px;color:var(--text3)">Ошибка загрузки лидов</p>';return;}
+  const j=await r.json();
+  const rows=j.rows||[];
+  if(rows.length===0){document.getElementById('leads-table').innerHTML='<p style="padding:24px;color:var(--text3);text-align:center">Под эти фильтры лидов нет</p>';return;}
+  const html=`<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="background:#f8fafc;text-align:left">
+      <th style="padding:8px">🌡</th><th>Имя / @user</th><th>Сценарий</th><th>Status</th><th>Источник / креатив</th><th>Direct</th><th>Phone</th><th>Time</th><th>Created</th><th>Действия</th>
+    </tr></thead><tbody>
+    ${rows.map(u=>{
+      const name = (u.first_name||'') + (u.username?` <a href="https://t.me/${u.username}" target="_blank" style="color:#6366f1">@${u.username}</a>`:'');
+      return `<tr style="border-top:1px solid #e5e7eb">
+        <td style="padding:8px">${tempBadge(u.temperature)}<br><small style="color:#9ca3af">${u.lead_score||0}</small></td>
+        <td style="padding:8px">${name||'—'}<br><small style="color:#9ca3af">id=${u.telegram_id}</small></td>
+        <td style="padding:8px">${u.scenario||'—'}</td>
+        <td style="padding:8px">${statusBadge(u.lead_status)}</td>
+        <td style="padding:8px">${u.source||'organic'}${u.creative?'<br><small style="color:#9ca3af">'+u.creative+'</small>':''}${u.utm_campaign?'<br><small>'+u.utm_campaign+'</small>':''}</td>
+        <td style="padding:8px;text-align:center">${u.direct_telegram_click_count>0?('⚡️ '+u.direct_telegram_click_count):'—'}</td>
+        <td style="padding:8px">${u.phone||'—'}</td>
+        <td style="padding:8px">${u.booking_time||'—'}</td>
+        <td style="padding:8px">${fmtDate(u.created_at)}</td>
+        <td style="padding:8px;white-space:nowrap">
+          <a href="tg://user?id=${u.telegram_id}" target="_blank" class="btn btn-outline" style="padding:4px 8px;font-size:11px">💬</a>
+          <select class="form-select" style="font-size:11px;padding:4px;width:auto;display:inline-block" onchange="setLeadStatus(${u.telegram_id}, this.value)">
+            <option value="">Изменить статус…</option>
+            <option value="contacted">contacted</option><option value="booked">booked</option><option value="paid">paid</option><option value="no_response">no_response</option><option value="archived">archived</option>
+          </select>
+        </td>
+      </tr>`;}).join('')}
+    </tbody></table>
+    <p style="padding:12px;color:var(--text3);text-align:right;font-size:11px">Показано ${rows.length} из ${j.count}</p>`;
+  document.getElementById('leads-table').innerHTML=html;
+}
+async function loadLeadsBreakdown(){
+  const r=await fetch(`${API}/leads/breakdown`,{headers:{Authorization:`Bearer ${TOKEN}`}});
+  if(!r.ok)return;
+  const j=await r.json();
+  const card=(title,arr,max=5)=>{const items=(arr||[]).slice(0,max).map(x=>`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>${x.k}</span><b>${x.v}</b></div>`).join('');
+    return `<div class="stat-card"><div class="stat-label">${title}</div><div style="font-size:11px;line-height:1.7">${items||'<i style="color:#9ca3af">—</i>'}</div></div>`;};
+  document.getElementById('leads-breakdown-cards').innerHTML =
+    card('🌡 По статусам', j.by_status) +
+    card('📊 По источникам', j.by_source) +
+    card('🎨 По креативам', j.by_creative) +
+    card('🎭 По сценариям', j.by_scenario);
+}
+async function setLeadStatus(id, status){
+  if(!status)return;
+  const r=await fetch(`${API}/leads/${id}/status`,{method:'PATCH',headers:{Authorization:`Bearer ${TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({lead_status:status})});
+  if(r.ok){toast('Статус обновлён');loadLeads();loadLeadsBreakdown();}
+  else toast('Ошибка обновления');
 }
 </script>
 </body>

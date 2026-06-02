@@ -22,13 +22,12 @@ const PORT = process.env.PORT || 4000;
 
 // Global bot instance will be set by initBot()
 
-// FIX: Restrict CORS to known origins
-const allowedOrigins = [
-  'https://altyn-bot-production.up.railway.app',
-  'https://altyn-therapy.uz',
-  'http://localhost:3000',
-  'http://localhost:4000'
-];
+// SECURITY v5.2: CORS origins are now env-driven (CORS_ORIGINS=comma-separated).
+// Removed the hardcoded Railway origin. Falls back to the public hostnames.
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://altyn-therapy.uz,https://admin.altyn-therapy.uz,https://bot.altyn-therapy.uz')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -52,8 +51,13 @@ async function startApp() {
     await initDatabase();
     console.log('✅ Database ready');
 
-    // Init Telegram bot (webhook in production, polling in dev)
-    const BOT_TOKEN = process.env.BOT_TOKEN || '8698863140:AAEZE-iDU9T9RkUwmtl00SvVzY0srM1woqw';
+    // SECURITY v5.2: BOT_TOKEN MUST come from env. No hardcoded fallback —
+    // a leaked production token in git history led to revocation. Fail-fast.
+    const BOT_TOKEN = process.env.BOT_TOKEN;
+    if (!BOT_TOKEN || !/^\d+:[A-Za-z0-9_-]{30,}$/.test(BOT_TOKEN)) {
+      console.error('❌ FATAL: BOT_TOKEN env var missing or malformed. Refusing to start.');
+      process.exit(1);
+    }
     const botInstance = initBot(BOT_TOKEN, app);
     // Make sure bot is available globally for cron jobs
     setBot(botInstance);
@@ -61,7 +65,8 @@ async function startApp() {
     // API routes
     app.use('/api', adminRouter);
 
-    // Debug endpoint - last errors
+    // SECURITY v5.2: /debug is gated behind ADMIN_TRIGGER_SECRET — it leaks stack traces and
+    // memory layout. Fail-closed when secret not configured.
     const errorLog = [];
     const MAX_ERRORS = 50;
     global.__addError = (source, msg, stack) => {
@@ -69,6 +74,9 @@ async function startApp() {
       if (errorLog.length > MAX_ERRORS) errorLog.length = MAX_ERRORS;
     };
     app.get('/debug', (req, res) => {
+      const expected = process.env.ADMIN_TRIGGER_SECRET;
+      if (!expected) return res.status(503).json({ error: 'ADMIN_TRIGGER_SECRET not set on server' });
+      if (req.get('X-Admin-Secret') !== expected) return res.status(401).json({ error: 'unauthorized' });
       res.json({
         errors: errorLog,
         uptime: process.uptime(),
@@ -226,23 +234,23 @@ async function startApp() {
       res.json({ ok: true, result: r, env_targets });
     });
 
-    // Health check
-    app.get('/health', (req, res) => {
-      const WEBHOOK_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-        ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-        : process.env.WEBHOOK_URL || null;
-
-      res.json({
+    // Health check (alias /api/health for compatibility with admin panel)
+    function healthPayload() {
+      const WEBHOOK_URL = process.env.WEBHOOK_URL
+        || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+      return {
         status: 'ok',
-        version: '4.9.1',
+        version: '5.2.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         notify_group: process.env.NOTIFY_GROUP_ID ? 'configured' : 'not set',
         owner_id: process.env.OWNER_TELEGRAM_ID ? 'configured' : 'not set'
-      });
-    });
+      };
+    }
+    app.get('/health', (req, res) => res.json(healthPayload()));
+    app.get('/api/health', (req, res) => res.json(healthPayload()));
 
     // Serve admin panel (catch-all — must be LAST route)
     app.get('*', (req, res) => {
@@ -319,6 +327,117 @@ async function startApp() {
       runOnce('cron:tornado', () => sendTornadoReactivation())
         .then(r => console.log(`✅ [${new Date().toISOString()}] CRON: TORNADO`, JSON.stringify(r)))
         .catch(err => console.error(`❌ CRON TORNADO error:`, err.message));
+    });
+
+    // ====================================================================
+    // v5.2 — FOLLOWUP cron (T+1h / T+24h / T+72h / T+7d, scenario-tailored)
+    // Driven by users.next_followup_at + users.followup_step. Idempotent.
+    // Skips: paid, booked, archived, no_response, opted-out (tornado_disabled=1).
+    // Quiet hours: 21:00–10:00 Asia/Tashkent — reschedule next_followup_at to 10:00 local.
+    // Manual control via POST /admin/v52/followup/{dry-run,run-batch} (admin secret).
+    // ====================================================================
+    function isQuietHourTashkent() {
+      // Asia/Tashkent = UTC+5, no DST. We want to send only 10:00–21:00 local.
+      const hourLocal = (new Date().getUTCHours() + 5) % 24;
+      return hourLocal < 10 || hourLocal >= 21;
+    }
+    function nextSendAtTashkent10() {
+      const now = new Date();
+      const hourLocal = (now.getUTCHours() + 5) % 24;
+      const ms = now.getTime();
+      // If we're already past 10:00 local, schedule next 10:00 tomorrow; otherwise today's 10:00.
+      let delta;
+      if (hourLocal < 10) {
+        delta = (10 - hourLocal) * 3600e3 - now.getUTCMinutes() * 60e3;
+      } else {
+        delta = (24 - hourLocal + 10) * 3600e3 - now.getUTCMinutes() * 60e3;
+      }
+      return new Date(ms + Math.max(delta, 60e3));
+    }
+    async function runFollowupBatch({ dryRun = false, limit = 50, ignoreQuietHours = false } = {}) {
+      const { pool } = await import('./database.js');
+      const { pickFollowup } = await import('./altyn-v52-content.js');
+      if (!ignoreQuietHours && isQuietHourTashkent() && !dryRun) {
+        return { dry_run: false, candidates: 0, sent: 0, skipped: 0, failed: 0, reason: 'quiet_hours_21_to_10_tashkent' };
+      }
+      const due = await pool.query(`
+        SELECT telegram_id, scenario, COALESCE(followup_step, 0) AS followup_step,
+               last_followup_at
+        FROM users
+        WHERE next_followup_at IS NOT NULL
+          AND next_followup_at <= NOW()
+          AND COALESCE(tornado_disabled, 0) = 0
+          AND COALESCE(lead_status, 'new') NOT IN ('booked','paid','archived','no_response')
+          AND COALESCE(followup_step, 0) < 4
+          AND (last_followup_at IS NULL OR last_followup_at < NOW() - INTERVAL '20 hours')
+        ORDER BY next_followup_at ASC
+        LIMIT $1
+      `, [Math.min(Math.max(limit, 1), 100)]);
+
+      const nextDelaysMs = [3600e3, 86400e3, 86400e3 * 3, 86400e3 * 7];
+      const result = { dry_run: dryRun, candidates: due.rows.length, sent: 0, skipped: 0, failed: 0, samples: [] };
+
+      for (const u of due.rows) {
+        const { text, slot, key } = pickFollowup(u.scenario, u.followup_step);
+        if (!text) { result.skipped++; continue; }
+        if (dryRun) {
+          result.samples.push({ telegram_id: u.telegram_id, scenario: u.scenario || null, key, slot, step: u.followup_step });
+          continue;
+        }
+        try {
+          const optoutHint = '\n\n_Если неактуально — нажмите /stop, и я больше не пишу._';
+          await botInstance.sendMessage(u.telegram_id, text + optoutHint, { parse_mode: 'Markdown' });
+          const nextStep = (u.followup_step || 0) + 1;
+          let nextAt = nextStep < 4 ? new Date(Date.now() + nextDelaysMs[nextStep]) : null;
+          // Snap night → 10:00 next-morning Tashkent
+          if (nextAt) {
+            const hLocal = (nextAt.getUTCHours() + 5) % 24;
+            if (hLocal < 10 || hLocal >= 21) nextAt = nextSendAtTashkent10();
+          }
+          // When the 4th touch lands, flip lead_status to 'reactivation' so admin sees it.
+          const reactivationPatch = nextStep >= 4 ? ", lead_status = COALESCE(NULLIF(lead_status,'paid'), 'reactivation')" : '';
+          await pool.query(
+            `UPDATE users SET followup_step=$1, last_followup_at=NOW(), next_followup_at=$2${reactivationPatch} WHERE telegram_id=$3`,
+            [nextStep, nextAt, u.telegram_id]
+          );
+          await pool.query(
+            "INSERT INTO analytics_events (event_type, user_telegram_id, data) VALUES ('FollowupSent', $1, $2)",
+            [u.telegram_id, JSON.stringify({ slot, key, step: nextStep })]
+          );
+          result.sent++;
+        } catch (err) {
+          result.failed++;
+          console.warn(`[v52-followup] ${u.telegram_id} failed:`, err.message);
+          if (err.response?.statusCode === 403 || /blocked/i.test(err.message || '')) {
+            await pool.query('UPDATE users SET tornado_disabled = 1, next_followup_at = NULL WHERE telegram_id = $1', [u.telegram_id]);
+            await pool.query("INSERT INTO analytics_events (event_type, user_telegram_id, data) VALUES ('FollowupOptOut', $1, '{\"reason\":\"blocked\"}')", [u.telegram_id]);
+          } else {
+            await pool.query("UPDATE users SET next_followup_at = NOW() + INTERVAL '30 minutes' WHERE telegram_id = $1", [u.telegram_id]);
+            await pool.query("INSERT INTO analytics_events (event_type, user_telegram_id, data) VALUES ('FollowupFailed', $1, $2)", [u.telegram_id, JSON.stringify({ msg: String(err.message || '').slice(0,200) })]);
+          }
+        }
+      }
+      return result;
+    }
+
+    cron.schedule('*/15 * * * *', () => {
+      runOnce('cron:v52-followup', () => runFollowupBatch({ dryRun: false, limit: 30 }))
+        .then(r => { if (r?.sent || r?.failed) console.log(`✅ [v52-followup]`, JSON.stringify(r)); })
+        .catch(err => console.error(`❌ CRON v52-followup error:`, err.message));
+    });
+
+    app.post('/admin/v52/followup/dry-run', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 100);
+      try { const r = await runFollowupBatch({ dryRun: true, limit, ignoreQuietHours: true }); res.json({ ok: true, result: r }); }
+      catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+    });
+    app.post('/admin/v52/followup/run-batch', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 100);
+      const force = String(req.query.ignore_quiet_hours || '') === '1';
+      try { const r = await runFollowupBatch({ dryRun: false, limit, ignoreQuietHours: force }); res.json({ ok: true, result: r }); }
+      catch (e) { res.status(500).json({ ok: false, error: e.message }); }
     });
 
     // 🛡️ STEEL E2E TESTS: Run daily at 04:00 AM Almaty (UTC+5 = 23:00 UTC previous day)

@@ -2,3 +2,8 @@ node_modules/
 data/
 .env
 *.db
+node_modules
+ACCESS_PRIVATE.local.md
+*.local.md
+ACCESS_PRIVATE_ALTYN.tar.gz
+*.tar.gz

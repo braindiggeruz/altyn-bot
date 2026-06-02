@@ -144,6 +144,44 @@ export async function initDatabase() {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NOW()`,
+      // ====================================================================
+      // v5.2.0 — Source / UTM tracking + extended funnel statuses
+      //   * creative      — last segment of start_param (e.g. "online_silence")
+      //   * ad_id         — Meta ad numeric id when forwarded by ad-link
+      //   * adset / campaign_id — Meta campaign breakdown when available
+      //   * start_param   — raw deep-link suffix verbatim (audit trail)
+      //   * booking_intent_at        — first time user pressed "Хочу разбор"
+      //   * direct_telegram_click_at — first time user pressed "Написать Алтын напрямую"
+      //   * lead_status   — admin-facing status (new/quiz_started/.../paid/no_response)
+      //   * paid_at       — when admin marks lead as paid
+      //   * last_followup_at / next_followup_at / followup_step — TORNADO complement
+      //   * lang          — i18n placeholder ('ru' default, 'uz' future)
+      // All columns are independently nullable/defaulted so legacy rows keep working.
+      // ====================================================================
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS creative TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS ad_id TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS adset TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS campaign_id TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS start_param TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_intent_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS direct_telegram_click_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS direct_telegram_click_count INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS lead_status TEXT DEFAULT 'new'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_followup_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS next_followup_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS followup_step INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'ru'`,
+      // Backfill lead_status from funnel_stage / booking_status for old rows.
+      `UPDATE users SET lead_status = 'paid' WHERE lead_status = 'new' AND paid_at IS NOT NULL`,
+      `UPDATE users SET lead_status = 'booked' WHERE lead_status = 'new' AND booking_status IN ('booked','confirmed','completed')`,
+      `UPDATE users SET lead_status = 'quiz_completed' WHERE lead_status = 'new' AND funnel_stage = 'quiz_completed'`,
+      `UPDATE users SET lead_status = 'quiz_started' WHERE lead_status = 'new' AND funnel_stage = 'quiz' AND quiz_started_at IS NOT NULL`,
+      // Backfill tornado_segment for NEW v5.2 scenarios (clarity, hot_cold, strong, distant, no_intimacy).
+      `UPDATE users SET tornado_segment = scenario WHERE tornado_segment IN ('generic', NULL) AND scenario IN ('clarity','hot_cold','strong','distant','no_intimacy')`,
+      `CREATE INDEX IF NOT EXISTS idx_users_lead_status ON users (lead_status)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_creative ON users (creative)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_next_followup ON users (next_followup_at) WHERE next_followup_at IS NOT NULL`,
     ];
     for (const mig of migrations) {
       await client.query(mig).catch(() => {});

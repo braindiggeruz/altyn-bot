@@ -1,0 +1,10 @@
+[allowlist]
+description = "ALTYN audit docs/historical commits — do not flag documented leaks"
+# AUDIT_v5.2.md documents a historical leak using a masked stub. Don't re-flag the doc itself.
+paths = [
+    '''AUDIT_v5.2\.md''',
+]
+# Historical commits we explicitly document — patched at HEAD, rotation tracked OOB.
+commits = [
+    "006ecb6",
+]
