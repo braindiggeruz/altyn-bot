@@ -3,3 +3,5 @@ data/
 .env
 *.db
 node_modules
+ACCESS_PRIVATE.local.md
+*.local.md
