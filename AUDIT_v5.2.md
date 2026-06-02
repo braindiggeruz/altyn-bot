@@ -10,7 +10,7 @@
 
 **Можно ли запускать Meta Ads сейчас:** **NO**, пока не выполнены 3 шага владельца:
 1. Rotate `BOT_TOKEN` через @BotFather (старый засветился в git history).
-2. Rotate admin password (`g4FZ****q2Pc` лежит в `e2e-test.js:118` в git history, commit `006ecb6`).
+2. Rotate admin password (захардкоженный 20-символьный pw лежит в `e2e-test.js:118` в git history, commit `006ecb6` — `[REDACTED]`).
 3. Rotate `JWT_SECRET` (старое значение `altyn_jwt_stable_secret_2024_production_key` было fallback'ом в `src/admin-api.js`).
 Это можно сделать за 10 минут (см. §Handoff).
 
@@ -37,7 +37,7 @@
 | CRITICAL | Auth | `BOT_TOKEN` hardcoded fallback в исходниках | `src/index.js:56` (pre-patch) — `'8698863140:AAEZE-i...'` | Любой может управлять ботом, читать чаты | Remove fallback, fail-fast при отсутствии env | ✅ patched |
 | CRITICAL | Auth | `JWT_SECRET` hardcoded fallback | `src/admin-api.js:21` — `'altyn_jwt_stable_secret_2024_production_key'` | Любой, видящий публичный repo, форджит admin JWT и читает CRM | Remove fallback; require >= 32 chars; throw at boot | ✅ patched |
 | CRITICAL | Webhook | Telegram-токен в URL `/bot${token}` | `src/bot.js:219` (pre-patch) | Токен утекает в Caddy/Cloudflare/Railway access logs | Path → `/tg/${WEBHOOK_SECRET_PATH}` + verify `X-Telegram-Bot-Api-Secret-Token` header | ✅ patched |
-| CRITICAL | Secrets | Admin password в git history | `e2e-test.js:118` commit `006ecb6` — `password: 'g4FZNUSk2qHgvn7aq2Pc'` | Любой с git clone логинится в админку и видит CRM | Replace literal with env vars in tests; **rotate password OOB** | ✅ patched in code, ⏳ rotation pending |
+| CRITICAL | Secrets | Admin password в git history | `e2e-test.js:118` commit `006ecb6` — захардкоженный 20-символьный pw, маска `[REDACTED]` | Любой с git clone логинится в админку и видит CRM | Replace literal with env vars in tests; **rotate password OOB** | ✅ patched in code, ⏳ rotation pending |
 | HIGH | Auth | `/debug` endpoint без gate | `src/index.js:71-78` (pre-patch) | Стек-трейсы + memory layout публично | Gate behind `X-Admin-Secret`, fail-closed когда env пуст | ✅ patched |
 | HIGH | Config | Railway-домен в CORS whitelist | `src/index.js:27-31` (pre-patch) | Старый домен принимает запросы, новые блокируются если CORS_ORIGINS не задан | `CORS_ORIGINS` env-driven с дефолтом на bot/admin/site | ✅ patched |
 | HIGH | UX/Brand | hardcoded `+7 707 719 85 61` WhatsApp на чужой номер | 10 мест в `src/bot.js` | Горячие лиды отправляются на dead phone | Все заменены на `OWNER_DIRECT_URL` (Telegram Алтын), env-driven | ✅ patched |
