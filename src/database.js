@@ -131,6 +131,13 @@ export async function initDatabase() {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS tornado_hot_notified INTEGER DEFAULT 0`,
       // Backfill segment from quiz scenario for existing users (idempotent).
       `UPDATE users SET tornado_segment = scenario WHERE tornado_segment IS NULL AND scenario IN ('savior','fear','control','freeze')`,
+      // v6.2: Backfill v6 scenarios → closest legacy TORNADO bySegment key so
+      // the existing 30-day content still reaches users with new scenarios
+      // (full v6 bySegment copy is in backlog). This makes the mapping match
+      // resolveSegmentForTornado() in bot.js exactly.
+      `UPDATE users SET tornado_segment = 'fear'    WHERE tornado_segment IS NULL AND scenario IN ('hot_cold','distant')`,
+      `UPDATE users SET tornado_segment = 'freeze'  WHERE tornado_segment IS NULL AND scenario IN ('clarity','no_intimacy')`,
+      `UPDATE users SET tornado_segment = 'control' WHERE tornado_segment IS NULL AND scenario = 'strong'`,
       `UPDATE users SET tornado_segment = 'generic' WHERE tornado_segment IS NULL`,
       `CREATE INDEX IF NOT EXISTS idx_users_tornado_segment ON users (tornado_segment, tornado_disabled, tornado_paused_until)`,
       // v4.8.0: Per-channel last-sent tracking (decouples warmup/reminder/tornado timings from updated_at)

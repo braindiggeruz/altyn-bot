@@ -258,6 +258,123 @@ async function startApp() {
       res.json({ ok: true, paused: false });
     });
 
+    // v6.2: Funnel-stage insights for the owner. Returns counts of users
+    // stuck at each spec-defined stage, scenario × stage matrix, top hot
+    // leads in last 24h, source ranking by booking_submitted, and creative
+    // ranking by quiz_completed/booking_submitted. Secret-gated.
+    app.post('/admin/v52/insights', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      try {
+        const { pool } = await import('./database.js');
+
+        // Funnel-segment counts (mirror classifyFunnelSegment() in bot.js).
+        const byStage = await pool.query(`
+          SELECT
+            CASE
+              WHEN booking_submitted_at IS NOT NULL                                                 THEN 'booking_submitted'
+              WHEN booking_intent_at IS NOT NULL                                                    THEN 'booking_intent_no_submit'
+              WHEN direct_owner_clicked_at IS NOT NULL AND booking_submitted_at IS NULL             THEN 'direct_click_no_booking'
+              WHEN result_viewed_at IS NOT NULL                                                     THEN 'result_viewed_no_booking'
+              WHEN quiz_completed_at IS NOT NULL                                                    THEN 'quiz_completed_no_booking'
+              WHEN quiz_started_at IS NOT NULL                                                      THEN 'quiz_started_not_completed'
+              ELSE                                                                                       'telegram_started_no_quiz'
+            END AS stage,
+            COUNT(*) AS n,
+            COUNT(*) FILTER (WHERE tornado_disabled = 1)                                              AS opted_out,
+            COUNT(*) FILTER (WHERE booking_status IN ('booked','confirmed','completed'))              AS booked
+          FROM users
+          WHERE telegram_id IS NOT NULL
+          GROUP BY 1
+          ORDER BY n DESC
+        `);
+
+        // Scenario × stage matrix (for v6 scenarios + legacy).
+        const matrix = await pool.query(`
+          SELECT
+            COALESCE(scenario, 'no_scenario') AS scenario,
+            COUNT(*)                                            AS total,
+            COUNT(*) FILTER (WHERE quiz_completed_at IS NOT NULL) AS quiz_completed,
+            COUNT(*) FILTER (WHERE result_viewed_at IS NOT NULL)  AS result_viewed,
+            COUNT(*) FILTER (WHERE booking_intent_at IS NOT NULL) AS booking_intent,
+            COUNT(*) FILTER (WHERE booking_submitted_at IS NOT NULL) AS booking_submitted,
+            COUNT(*) FILTER (WHERE direct_owner_clicked_at IS NOT NULL) AS direct_click
+          FROM users
+          GROUP BY 1
+          ORDER BY total DESC
+        `);
+
+        // Hot leads last 24h: booking_submitted OR direct_click OR tornado_score>=50.
+        const hot24h = await pool.query(`
+          SELECT telegram_id, first_name, username, scenario, lead_status, source, creative,
+                 booking_submitted_at, direct_owner_clicked_at, tornado_score, temperature
+          FROM users
+          WHERE (booking_submitted_at >= NOW() - INTERVAL '24 hours'
+              OR direct_owner_clicked_at >= NOW() - INTERVAL '24 hours'
+              OR (tornado_score >= 50 AND COALESCE(last_tornado_click, last_active) >= NOW() - INTERVAL '24 hours'))
+          ORDER BY GREATEST(
+                     COALESCE(booking_submitted_at, '1970-01-01'),
+                     COALESCE(direct_owner_clicked_at, '1970-01-01'),
+                     COALESCE(last_tornado_click, '1970-01-01')
+                   ) DESC
+          LIMIT 50
+        `);
+
+        // Top sources by booking_submitted (last 30 days).
+        const topSources = await pool.query(`
+          SELECT COALESCE(source, 'organic') AS source,
+                 COUNT(*) FILTER (WHERE booking_submitted_at IS NOT NULL) AS booked,
+                 COUNT(*) FILTER (WHERE quiz_completed_at  IS NOT NULL) AS quiz_completed,
+                 COUNT(*)                                                AS total_leads
+          FROM users
+          WHERE created_at >= NOW() - INTERVAL '30 days'
+          GROUP BY 1
+          ORDER BY booked DESC, quiz_completed DESC
+          LIMIT 20
+        `);
+
+        // Top creatives by quiz_completed and booking_submitted.
+        const topCreatives = await pool.query(`
+          SELECT COALESCE(creative, '—') AS creative,
+                 COALESCE(source, 'organic') AS source,
+                 COUNT(*) FILTER (WHERE booking_submitted_at IS NOT NULL) AS booked,
+                 COUNT(*) FILTER (WHERE quiz_completed_at  IS NOT NULL) AS quiz_completed,
+                 COUNT(*)                                                AS total_leads
+          FROM users
+          WHERE created_at >= NOW() - INTERVAL '30 days' AND creative IS NOT NULL
+          GROUP BY 1, 2
+          ORDER BY booked DESC, quiz_completed DESC
+          LIMIT 25
+        `);
+
+        // Needs owner attention: booking_submitted, owner_notified, but booking_status NOT booked/confirmed.
+        const needsOwner = await pool.query(`
+          SELECT telegram_id, first_name, username, scenario, booking_name, booking_request, booking_time,
+                 booking_submitted_at, owner_notified_at, source, creative
+          FROM users
+          WHERE booking_submitted_at IS NOT NULL
+            AND (booking_status IS NULL OR booking_status NOT IN ('booked','confirmed','completed'))
+          ORDER BY booking_submitted_at DESC
+          LIMIT 25
+        `);
+
+        res.json({
+          ok: true,
+          quiet_hours_now: (await import('./bot.js')).quietHoursStatus
+            ? (await import('./bot.js')).quietHoursStatus()
+            : null,
+          by_stage: byStage.rows,
+          by_scenario: matrix.rows,
+          hot_24h: hot24h.rows,
+          top_sources_30d: topSources.rows,
+          top_creatives_30d: topCreatives.rows,
+          needs_owner_attention: needsOwner.rows
+        });
+      } catch (e) {
+        console.error('insights endpoint error:', e.message);
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+
     // Quick smoke test: dispatch a test message to NOTIFY_GROUP_ID + OWNER_TELEGRAM_ID.
     // Use to verify group notifications work end-to-end without going through the funnel.
     app.post('/admin/test-notify', async (req, res) => {
@@ -293,7 +410,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '6.1.1-quiz-photos-diag',
+        version: '6.2.0-tornado-audit',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),

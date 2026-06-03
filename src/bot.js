@@ -155,6 +155,60 @@ export async function notifyAdmin(text, options = {}) {
 let bot;
 
 // ============================================================
+// v6.2: TORNADO QUIET HOURS + SCENARIO HELPERS
+// ============================================================
+
+// Returns { quiet: boolean, tashkentHour: number, sinceMin: number, untilMin: number }.
+// "quiet" = local Tashkent (UTC+5, no DST) hour is in [21, 24) ∪ [0, 10).
+// Used to gate every LIVE follow-up send (TORNADO + sendReminders).
+// Dry-run and explicit-target diagnostic sends bypass the gate.
+export function quietHoursStatus(now = new Date()) {
+  // Asia/Tashkent is fixed UTC+5 year-round, no daylight saving since 1991.
+  const tashkentHour = (now.getUTCHours() + 5) % 24;
+  const tashkentMin  = now.getUTCMinutes();
+  const quiet = (tashkentHour >= 21) || (tashkentHour < 10);
+  return { quiet, tashkentHour, tashkentMin, window: '10:00–21:00 Asia/Tashkent' };
+}
+
+// v6 scenario set — kept in sync with content.js SCENARIO_RESULTS.
+// Used so TORNADO can pick a tone-appropriate copy variant for the new scenarios.
+const V6_SCENARIOS = ['hot_cold', 'clarity', 'savior', 'strong', 'distant', 'no_intimacy'];
+const LEGACY_SCENARIOS = ['savior', 'fear', 'control', 'freeze'];
+const ALL_KNOWN_SCENARIOS = Array.from(new Set([...V6_SCENARIOS, ...LEGACY_SCENARIOS]));
+
+// Map any user scenario → the best-matching bySegment key currently present
+// in tornado-content.js. The TORNADO copy still has only legacy
+// savior/fear/control/freeze branches, so this aliasing keeps the tone close
+// without requiring a full content rewrite (planned in backlog).
+function resolveSegmentForTornado(scenario) {
+  if (!scenario) return 'generic';
+  if (LEGACY_SCENARIOS.includes(scenario)) return scenario;
+  switch (scenario) {
+    case 'hot_cold':    return 'fear';   // waiting / hot-cold ≈ fear-of-loss
+    case 'clarity':     return 'freeze'; // foggy, can't decide ≈ freeze
+    case 'strong':      return 'control';// all on herself ≈ control
+    case 'distant':     return 'fear';   // pulled to unavailable ≈ fear-of-loss
+    case 'no_intimacy': return 'freeze'; // numb / disconnected ≈ freeze
+    case 'savior':      return 'savior'; // identical
+    default:            return 'generic';
+  }
+}
+
+// Funnel-stage segment classifier for owner-side insights.
+// NOT used for content routing yet — only labels candidates so the dry-run
+// output (and admin insights) tells the owner exactly *where* the user got stuck.
+export function classifyFunnelSegment(u) {
+  if (!u) return 'unknown';
+  if (u.booking_submitted_at) return 'booking_submitted';
+  if (u.booking_intent_at)    return 'booking_intent_no_submit';
+  if (u.direct_owner_clicked_at && !u.booking_submitted_at) return 'direct_click_no_booking';
+  if (u.result_viewed_at)     return 'result_viewed_no_booking';
+  if (u.quiz_completed_at)    return 'quiz_completed_no_booking';
+  if (u.quiz_started_at)      return 'quiz_started_not_completed';
+  return 'telegram_started_no_quiz';
+}
+
+// ============================================================
 // v4.8.0: PRODUCTION HARDENING HELPERS
 // ============================================================
 
@@ -1532,6 +1586,14 @@ async function sendQuizResult(chatId, answers) {
 export async function sendWarmupMessages() {
   if (!bot) return { sent: 0, failed: 0, skipped: 0 };
 
+  // v6.2: Quiet hours guard. The 05:00 UTC cron = 10:00 Tashkent which is at
+  // the boundary — handle the corner cleanly so we never write at 09:59.
+  const quiet = quietHoursStatus();
+  if (quiet.quiet) {
+    console.log(`🔥 sendWarmupMessages: quiet hours (Tashkent ${quiet.tashkentHour}h) — skipping`);
+    return { sent: 0, failed: 0, skipped: 'quiet_hours', quiet };
+  }
+
   const users = await getUsersDueForWarmup();
   console.log(`🔥 WARMUP: ${users.length} user(s) due for next message`);
 
@@ -1632,6 +1694,14 @@ export async function sendWarmupMessages() {
 // ============================================================
 export async function sendReminders() {
   if (!bot) return null;
+
+  // v6.2: Quiet hours guard for booking/quiz reminders too — these used to fire
+  // every 2h via cron, including 02:00 Tashkent. Same window as TORNADO.
+  const quiet = quietHoursStatus();
+  if (quiet.quiet) {
+    console.log(`🔔 sendReminders: quiet hours (Tashkent ${quiet.tashkentHour}h) — skipping`);
+    return { skipped: 'quiet_hours', quiet };
+  }
 
   const stats = { quiz_2h: 0, quiz_24h: 0, booking_30m: 0, booking_24h: 0, session: 0, reactivation: 0, post_session: 0 };
 
@@ -1907,6 +1977,15 @@ export async function sendTornadoReactivation(opts = {}) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
   const safeIdle = Math.max(0, Math.min(Number(minIdleDays), 90));
 
+  // v6.2: Quiet hours guard — 21:00–10:00 Asia/Tashkent. Applies only to LIVE
+  // sends. Dry-run, explicit-target tests, and master switch off still work
+  // any time so the owner can run diagnostics whenever.
+  const quietInfo = quietHoursStatus();
+  if (!dryRun && !onlyTelegramIds && quietInfo.quiet) {
+    console.warn(`🌪️ TORNADO[${source}]: quiet hours (Tashkent ${quietInfo.tashkentHour}h) — skipping live send`);
+    return { sent: 0, failed: 0, candidates: 0, considered: 0, blocked: 0, skipped: 0, error: 'quiet_hours', quiet_hours: quietInfo };
+  }
+
   // Master kill switch — set TORNADO_ENABLED=0 in Railway env to pause all sends.
   // dry-run and explicit-target test sends still work for diagnostics.
   if (process.env.TORNADO_ENABLED === '0' && !dryRun && !onlyTelegramIds) {
@@ -1966,20 +2045,28 @@ export async function sendTornadoReactivation(opts = {}) {
       first_name: u.first_name || null,
       username: u.username || null,
       funnel_stage: u.funnel_stage,
+      funnel_segment: classifyFunnelSegment(u),
       booking_status: u.booking_status,
-      tornado_segment: u.tornado_segment || (u.scenario || 'generic'),
+      tornado_segment: u.tornado_segment || resolveSegmentForTornado(u.scenario),
       tornado_day_current: u.tornado_day || 0,
       tornado_day_next: (u.tornado_day || 0) + 1,
       tornado_score: u.tornado_score || 0,
+      scenario: u.scenario || null,
       last_active: u.last_active,
       last_warmup_sent_at: u.last_warmup_sent_at
     }));
-    console.log(`🌪️ TORNADO[${source}] DRY RUN candidates:`, JSON.stringify(details.slice(0, 10)));
+    // Group counts by funnel_segment for owner insight.
+    const segCounts = {};
+    for (const d of details) segCounts[d.funnel_segment] = (segCounts[d.funnel_segment] || 0) + 1;
+    console.log(`🌪️ TORNADO[${source}] DRY RUN counts:`, JSON.stringify(segCounts));
+    console.log(`🌪️ TORNADO[${source}] DRY RUN sample (first 10):`, JSON.stringify(details.slice(0, 10)));
     return {
       dryRun: true,
       candidates: candidates.length,
       considered: candidates.length,
       sent: 0, failed: 0, blocked: 0, skipped: 0,
+      quiet_hours: quietInfo,
+      funnel_segment_counts: segCounts,
       details
     };
   }
@@ -1994,7 +2081,7 @@ export async function sendTornadoReactivation(opts = {}) {
     const dayDef = TORNADO_DAYS[nextDay - 1];
     if (!dayDef) { skipped++; continue; }
 
-    const segment = user.tornado_segment || (user.scenario && ['savior','fear','control','freeze'].includes(user.scenario) ? user.scenario : 'generic');
+    const segment = user.tornado_segment || resolveSegmentForTornado(user.scenario);
     const text = resolveTornadoText(dayDef, segment);
     if (!text) { skipped++; continue; }
 

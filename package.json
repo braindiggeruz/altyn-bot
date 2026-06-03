@@ -1,6 +1,6 @@
 {
   "name": "altyn-therapy-bot",
-  "version": "6.1.1-quiz-photos-diag",
+  "version": "6.2.0-tornado-audit",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
