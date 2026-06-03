@@ -255,6 +255,69 @@ export function initBot(token, app) {
     });
   }
 
+  // ============================================================
+  // v5.2: DEEPLINK ATTRIBUTION + HOT FLOW
+  // ============================================================
+  // parseStartParam: turn the raw payload after /start into structured fields.
+  // KEY BUG FIX: 'src_site_hero' MUST resolve to source='site', creative='hero',
+  // never source='src'. Same for src_ig_*, src_google_*, src_owner_*.
+  function parseStartParam(raw) {
+    const out = {
+      start_param: null,
+      source: 'organic',
+      creative: null,
+      campaign: null,
+      adset: null,
+      ad_id: null,
+      referrer_id: null
+    };
+    if (!raw) return out;
+    const sp = String(raw).trim().replace(/^[^A-Za-z0-9_-]+/, '').slice(0, 64);
+    if (!sp) return out;
+    out.start_param = sp;
+    if (sp.startsWith('ref_')) {
+      out.source = 'referral';
+      out.referrer_id = sp.slice(4) || null;
+      out.campaign = out.referrer_id;
+      return out;
+    }
+    if (sp.startsWith('cmp_')) {
+      out.source = 'paid';
+      out.campaign = sp.slice(4) || null;
+      return out;
+    }
+    if (sp.startsWith('ad_')) {
+      out.source = 'paid';
+      out.ad_id = sp.slice(3) || null;
+      return out;
+    }
+    if (sp.startsWith('src_')) {
+      const parts = sp.slice(4).split('_');
+      out.source = parts[0] || 'site';
+      out.creative = parts.slice(1).join('_') || null;
+      return out;
+    }
+    out.source = sp;
+    return out;
+  }
+
+  // Hot start params trigger the 3-button welcome (booking / quiz / direct).
+  // For everything else we keep the original single-button "Пройти тест" flow.
+  const HOT_START_PARAMS = new Set([
+    'src_site_hero', 'src_site_hot_10usd', 'src_site_sticky',
+    'src_owner_reactivation',
+    'src_ig_online_silence', 'src_ig_hot_cold', 'src_ig_scenario_10usd',
+    'src_google_search', 'src_google_relationship', 'src_google_hypno'
+  ]);
+  function isHotStart(sp) {
+    if (!sp) return false;
+    if (HOT_START_PARAMS.has(sp)) return true;
+    return /^src_(owner|google)_/.test(sp) || /^src_ig_(hot|scenario|online)/.test(sp);
+  }
+  const HOT_WELCOME_TEXT =
+    'Здравствуйте 🤍\n\n' +
+    'Вижу, вы пришли на личный *разбор сценария*. Можно оставить заявку на разбор за *10$* или сначала пройти короткий тест и понять, какой сценарий повторяется.';
+
   // /start command
   bot.onText(/\/start(.*)/, async (msg, match) => {
    try {
@@ -262,21 +325,16 @@ export function initBot(token, app) {
     const param = match[1] ? match[1].trim() : '';
     console.log(`📩 /start received from ${chatId} (param: '${param}')`);
 
-    let source = 'organic';
-    let utm = {};
-    let referrerId = null;
+    const parsed = parseStartParam(param);
+    const { start_param, source, creative, campaign, adset, ad_id, referrer_id } = parsed;
+    const hot = isHotStart(start_param);
 
-    if (param) {
-      if (param.startsWith('ref_')) {
-        referrerId = param.replace('ref_', '');
-        source = 'referral';
-        utm = { utm_source: 'referral', utm_medium: 'bot', utm_campaign: referrerId };
-      } else {
-        const parts = param.split('_');
-        source = parts[0] || 'link';
-        utm = { utm_source: parts[0], utm_medium: parts[1], utm_campaign: parts[2] };
-      }
-    }
+    // utm_* keeps backward compatibility with old admin reports.
+    const utm = {
+      utm_source: source || null,
+      utm_medium: creative ? 'deeplink' : null,
+      utm_campaign: campaign || creative || null
+    };
 
     await createUser({
       telegram_id: chatId,
@@ -289,14 +347,25 @@ export function initBot(token, app) {
     const existingUser = await getUser(chatId);
     const alreadyBooked = existingUser && ['booked', 'confirmed', 'completed'].includes(existingUser.booking_status);
 
+    const captureFields = {
+      start_param: start_param || existingUser?.start_param || null,
+      creative: creative || existingUser?.creative || null,
+      adset: adset || existingUser?.adset || null,
+      ad_id: ad_id || existingUser?.ad_id || null,
+      // Don't overwrite a stronger source ('referral','paid','site','ig','google','owner')
+      // with 'organic' on subsequent /start without payload.
+      source: (source && source !== 'organic') ? source : (existingUser?.source || source),
+      ...utm,
+      referred_by: referrer_id || existingUser?.referred_by || undefined,
+      lead_status: alreadyBooked ? (existingUser?.lead_status || 'booking_submitted') : 'telegram_started',
+      telegram_started_at: existingUser?.telegram_started_at || new Date().toISOString()
+    };
+
     if (alreadyBooked) {
-      await updateUser(chatId, {
-        last_active: new Date().toISOString(),
-        referred_by: referrerId || undefined,
-        ...utm
-      });
+      await updateUser(chatId, captureFields);
     } else {
       await updateUser(chatId, {
+        ...captureFields,
         funnel_stage: 'started',
         quiz_answers: null,
         quiz_score: 0,
@@ -306,18 +375,26 @@ export function initBot(token, app) {
         booking_status: 'none',
         booking_name: null,
         booking_request: null,
-        booking_time: null,
-        referred_by: referrerId || undefined,
-        ...utm
+        booking_time: null
       });
     }
 
+    // Analytics — always log a TelegramLead, plus HotIntent if hot.
+    await logEvent('TelegramLead', chatId, {
+      start_param, source, creative, campaign, adset, ad_id,
+      username: msg.from.username || null,
+      hot
+    });
+    if (hot) {
+      await logEvent('HotIntent', chatId, { start_param, source, creative });
+    }
+
     // Track referral
-    if (referrerId) {
+    if (referrer_id) {
       try {
         const { trackReferral } = await import('./database.js');
-        await trackReferral(referrerId, chatId);
-        const referrer = await getUser(parseInt(referrerId));
+        await trackReferral(referrer_id, chatId);
+        const referrer = await getUser(parseInt(referrer_id));
         if (referrer) {
           const newName = msg.from.first_name || 'Кто-то';
           bot.sendMessage(referrer.telegram_id, REFERRAL_NOTIFY(escapeMd(referrer.first_name || 'друг'), escapeMd(newName)), {
@@ -329,55 +406,75 @@ export function initBot(token, app) {
       }
     }
 
-    // v4.9.0: Bullet-proof welcome delivery. Photo is optional decoration; the
-    // "Пройти тест" button MUST always reach the user, otherwise the funnel
-    // dies at step zero. We try photo first; on any failure (size, network,
-    // markdown caption issue) we fall through to plain text + button.
-    const welcomeKeyboard = {
-      inline_keyboard: [[
-        { text: '🔮 Пройти тест', callback_data: 'quiz_start' }
-      ]]
-    };
-    let welcomeDelivered = false;
-    try {
-      const imgPath = path.resolve(__dirname, '..', 'assets', 'welcome.png');
-      if (fs.existsSync(imgPath)) {
+    // Welcome: hot leads get the 3-button choice (book / quiz / direct).
+    // Cold leads keep the original single-button "Пройти тест" path so the
+    // existing funnel and assets are untouched.
+    if (hot) {
+      const hotKb = {
+        inline_keyboard: [
+          [{ text: '💎 Хочу разбор за 10$',     callback_data: 'book_diagnostic' }],
+          [{ text: '🔮 Пройти тест сценария',   callback_data: 'quiz_start' }],
+          [{ text: '💬 Написать Алтын напрямую', callback_data: 'direct_owner' }]
+        ]
+      };
+      try {
+        await bot.sendMessage(chatId, HOT_WELCOME_TEXT, { parse_mode: 'Markdown', reply_markup: hotKb });
+      } catch (e) {
+        await bot.sendMessage(chatId, HOT_WELCOME_TEXT.replace(/[*_`]/g, ''), { reply_markup: hotKb });
+      }
+    } else {
+      // v4.9.0: Bullet-proof welcome delivery. Photo is optional decoration; the
+      // "Пройти тест" button MUST always reach the user.
+      const welcomeKeyboard = {
+        inline_keyboard: [[
+          { text: '🔮 Пройти тест', callback_data: 'quiz_start' }
+        ]]
+      };
+      let welcomeDelivered = false;
+      try {
+        const imgPath = path.resolve(__dirname, '..', 'assets', 'welcome.png');
+        if (fs.existsSync(imgPath)) {
+          try {
+            await bot.sendPhoto(chatId, imgPath, {
+              caption: WELCOME_TEXT,
+              parse_mode: 'Markdown',
+              reply_markup: welcomeKeyboard
+            });
+            welcomeDelivered = true;
+          } catch (photoErr) {
+            console.error(`Welcome photo failed for ${chatId}, falling back to text:`, photoErr.message);
+          }
+        }
+      } catch (err) {
+        console.error('Welcome image path error:', err.message);
+      }
+      if (!welcomeDelivered) {
         try {
-          await bot.sendPhoto(chatId, imgPath, {
-            caption: WELCOME_TEXT,
+          await bot.sendMessage(chatId, WELCOME_TEXT, {
             parse_mode: 'Markdown',
             reply_markup: welcomeKeyboard
           });
-          welcomeDelivered = true;
-        } catch (photoErr) {
-          console.error(`Welcome photo failed for ${chatId}, falling back to text:`, photoErr.message);
+        } catch (mdErr) {
+          console.error(`Welcome markdown failed for ${chatId}, sending plain:`, mdErr.message);
+          await bot.sendMessage(chatId, WELCOME_TEXT.replace(/[*_`]/g, ''), {
+            reply_markup: welcomeKeyboard
+          });
         }
-      }
-    } catch (err) {
-      console.error('Welcome image path error:', err.message);
-    }
-    if (!welcomeDelivered) {
-      try {
-        await bot.sendMessage(chatId, WELCOME_TEXT, {
-          parse_mode: 'Markdown',
-          reply_markup: welcomeKeyboard
-        });
-      } catch (mdErr) {
-        // Last-resort: drop markdown entirely so the user at least sees the button
-        console.error(`Welcome markdown failed for ${chatId}, sending plain:`, mdErr.message);
-        await bot.sendMessage(chatId, WELCOME_TEXT.replace(/[*_`]/g, ''), {
-          reply_markup: welcomeKeyboard
-        });
       }
     }
 
-    await logMessage(chatId, 'out', 'welcome', 'Welcome message sent');
-    console.log(`✅ /start completed for ${chatId}`);
+    await logMessage(chatId, 'out', 'welcome', hot ? 'hot_welcome' : 'welcome');
+    console.log(`✅ /start completed for ${chatId} (source=${source}, creative=${creative || '-'}, hot=${hot})`);
 
     const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
     const uname = msg.from.username ? `@${msg.from.username}` : 'нет username';
+    const srcLabel = creative ? `${source} / ${creative}` : source;
     notifyAdmin(
-      `🆕 *Новый пользователь!*\n\n👤 ${escapeMd(name)}\n📱 ${escapeMd(uname)}\n🆔 \`${chatId}\`\n📊 Источник: ${escapeMd(source)}${referrerId ? `\n🔗 Реферал от: ${escapeMd(referrerId)}` : ''}`
+      `${hot ? '🔥 *Горячий лид!*' : '🆕 *Новый пользователь!*'}\n\n` +
+      `👤 ${escapeMd(name)}\n📱 ${escapeMd(uname)}\n🆔 \`${chatId}\`\n` +
+      `📊 Источник: ${escapeMd(srcLabel)}\n` +
+      `🔗 start: \`${escapeMd(start_param || '-')}\`` +
+      (referrer_id ? `\n🤝 Реферал от: ${escapeMd(referrer_id)}` : '')
     );
    } catch (fatalErr) {
     console.error(`❌ FATAL /start error for ${msg?.chat?.id}:`, fatalErr.message, fatalErr.stack);
@@ -386,6 +483,22 @@ export function initBot(token, app) {
       await bot.sendMessage(msg.chat.id, '⚠️ Произошла ошибка. Попробуйте ещё раз через минуту или напишите /start', { parse_mode: 'Markdown' });
     } catch(e) { console.error('Could not send error message:', e.message); }
    }
+  });
+
+  // /stop — explicit opt-out from any further follow-ups (TORNADO + warmup).
+  bot.onText(/^\/stop\b/i, async (msg) => {
+    const chatId = msg.chat.id;
+    try {
+      await updateUser(chatId, {
+        tornado_disabled: 1,
+        warmup_active: 0,
+        exit_reason: 'user_stop'
+      }, true);
+      await logEvent('StopOptOut', chatId, {});
+      await bot.sendMessage(chatId, '🤍 Вы отписались от напоминаний. Если захотите вернуться — напишите /start.');
+    } catch (e) {
+      console.error(`/stop error for ${chatId}:`, e.message);
+    }
   });
 
   // ============================================================
@@ -402,11 +515,13 @@ export function initBot(token, app) {
 
     // ---- Quiz start ----
     if (data === 'quiz_start') {
+      await logEvent('QuizStart', chatId, {});
       await logEvent('quiz_start', chatId, {});
       await updateUser(chatId, {
         funnel_stage: 'quiz',
         quiz_answers: JSON.stringify([]),
-        quiz_started_at: new Date().toISOString()
+        quiz_started_at: new Date().toISOString(),
+        lead_status: 'quiz_started'
       });
       await removeKeyboard(chatId, messageId);
       await sendTyping(chatId, 500);
@@ -492,14 +607,58 @@ export function initBot(token, app) {
         booking_name: null,
         booking_request: null,
         booking_time: null,
-        booking_started_at: new Date().toISOString()
+        booking_started_at: new Date().toISOString(),
+        booking_intent_at: new Date().toISOString(),
+        lead_status: 'booking_intent'
       });
       await removeKeyboard(chatId, messageId);
       const name = user?.first_name || '';
       await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
         parse_mode: 'Markdown'
       });
+      await logEvent('BookingIntent', chatId, { from: data });
       await logEvent('booking_start', chatId, {});
+      return;
+    }
+
+    // ---- Direct to owner (after capture). User is already in DB; this
+    //      logs DirectTelegramClick and shows the @Altyn2304 deep link
+    //      together with quiz/booking options so we never lose the lead.
+    if (data === 'direct_owner') {
+      const user = await getUser(chatId);
+      await updateUser(chatId, {
+        direct_owner_clicked_at: new Date().toISOString(),
+        lead_status: user?.lead_status === 'booking_submitted' ? 'booking_submitted' : 'direct_owner_clicked'
+      }, true);
+      await logEvent('DirectTelegramClick', chatId, {
+        start_param: user?.start_param || null,
+        source: user?.source || null,
+        creative: user?.creative || null
+      });
+      const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || (msg?.chat?.first_name || '');
+      const uname = user?.username ? `@${user.username}` : 'нет username';
+      const src = [user?.source, user?.creative].filter(Boolean).join(' / ') || 'organic';
+      notifyAdmin(
+        `💬 *Лид нажал «Написать Алтын напрямую»*\n\n` +
+        `👤 ${escapeMd(name)}\n📱 ${escapeMd(uname)}\n🆔 \`${chatId}\`\n` +
+        `📊 Источник: ${escapeMd(src)}\n` +
+        `🔗 start: \`${escapeMd(user?.start_param || '-')}\`\n` +
+        `🧭 Сценарий: ${escapeMd(user?.scenario || '—')}`
+      );
+      await removeKeyboard(chatId, messageId);
+      await bot.sendMessage(chatId,
+        'Отлично 🤍\n\nНажмите кнопку ниже — откроется чат с Алтын.\n' +
+        'Если удобнее — можете сразу оставить заявку или пройти короткий тест:',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Открыть чат с Алтын', url: 'https://t.me/Altyn2304' }],
+              [{ text: '💎 Хочу разбор за 10$',    callback_data: 'book_diagnostic' }],
+              [{ text: '🔮 Пройти тест сценария',  callback_data: 'quiz_start' }]
+            ]
+          }
+        }
+      );
       return;
     }
 
@@ -946,11 +1105,19 @@ export function initBot(token, app) {
         await updateUser(chatId, {
           booking_time: msg.text.trim(),
           booking_status: 'booked',
-          funnel_stage: 'booked'
+          funnel_stage: 'booked',
+          lead_status: 'booking_submitted',
+          booking_submitted_at: new Date().toISOString(),
+          owner_notified_at: new Date().toISOString()
         });
         const updatedUser = await getUser(chatId);
         const name = updatedUser.booking_name || updatedUser.first_name || 'друг';
         await logMessage(chatId, 'in', 'booking_time', msg.text);
+        await logEvent('BookingSubmitted', chatId, {
+          name, request: updatedUser.booking_request, time: msg.text,
+          scenario: updatedUser.scenario, source: updatedUser.source,
+          start_param: updatedUser.start_param, creative: updatedUser.creative
+        });
         await logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
         await sendTyping(chatId, 1000);
         await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(escapeMd(name)), {
@@ -1117,8 +1284,11 @@ async function sendQuizResult(chatId, answers) {
     warmup_active: 1,
     warmup_day: 0,
     quiz_completed_at: new Date().toISOString(),
-    last_warmup_sent_at: null
+    last_warmup_sent_at: null,
+    lead_status: 'quiz_completed'
   });
+  await logEvent('QuizComplete', chatId, { scenario, scores });
+  await logEvent('ScenarioGenerated', chatId, { scenario });
   await logEvent('quiz_completed', chatId, { scenario, scores });
   await logMessage(chatId, 'out', 'quiz_result', scenario);
 
@@ -1738,6 +1908,7 @@ export async function sendTornadoReactivation(opts = {}) {
     } else if (sendRes.ok) {
       sent++;
       await logEvent('tornado_sent', user.telegram_id, { day: nextDay, segment, type: dayDef.type, source });
+      await logEvent('FollowupSent', user.telegram_id, { day: nextDay, segment, type: dayDef.type, source });
       details.push({ telegram_id: Number(user.telegram_id), day: nextDay, segment, type: dayDef.type, status: 'sent' });
       console.log(`✅ TORNADO Day ${nextDay}/${segment}/${dayDef.type} → ${user.telegram_id} (${source})`);
     } else {
