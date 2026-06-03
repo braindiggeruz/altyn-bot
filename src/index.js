@@ -16,6 +16,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const assetsDir = path.join(__dirname, '..', 'assets');
 if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
 
+// v6.1.1: explicit startup-time audit of quiz photo assets. If this prints
+// "[startup] quiz assets: count=0" the container is missing the PNGs and
+// every photo step will silently fall back to text. Common cause: a
+// volume mount in docker-compose.yml that shadows /app/assets/.
+try {
+  const quizDir = path.join(assetsDir, 'quiz');
+  if (fs.existsSync(quizDir)) {
+    const files = fs.readdirSync(quizDir).filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f));
+    console.log(`[startup] quiz assets: dir=${quizDir} count=${files.length} sample=${files[0] || 'NONE'}`);
+    if (files.length === 0) {
+      console.warn('[startup] WARN: assets/quiz exists but is EMPTY inside the container — photos will fall back to text.');
+    }
+  } else {
+    console.warn(`[startup] WARN: assets/quiz NOT FOUND inside container at ${quizDir} — photos will fall back to text.`);
+  }
+} catch (e) {
+  console.error('[startup] asset audit failed:', e.message);
+}
+
 // ==================== EXPRESS SERVER ====================
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -258,16 +277,68 @@ async function startApp() {
         ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
         : process.env.WEBHOOK_URL || null;
 
+      // v6.1.1 quiz-asset diagnostic — proves whether the 18 PNGs ended up
+      // INSIDE the running container at /app/assets/quiz/. If `assets_quiz`
+      // is missing or count<18, the bot will silently fall back to text and
+      // Telegram will look like "no photos". Most common root cause is a
+      // bind-mount in docker-compose.yml that shadows /app/assets/.
+      const quizDir = path.join(__dirname, '..', 'assets', 'quiz');
+      let quizInfo = { dir: quizDir, exists: false, count: 0, files: [] };
+      try {
+        if (fs.existsSync(quizDir)) {
+          const files = fs.readdirSync(quizDir).filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f)).sort();
+          quizInfo = { dir: quizDir, exists: true, count: files.length, files };
+        }
+      } catch (e) { quizInfo.error = e.message; }
+
       res.json({
         status: 'ok',
-        version: '6.1.0-quiz-photos',
+        version: '6.1.1-quiz-photos-diag',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         notify_group: process.env.NOTIFY_GROUP_ID ? 'configured' : 'not set',
-        owner_id: process.env.OWNER_TELEGRAM_ID ? 'configured' : 'not set'
+        owner_id: process.env.OWNER_TELEGRAM_ID ? 'configured' : 'not set',
+        assets_quiz: quizInfo
       });
+    });
+
+    // v6.1.1: dedicated debug endpoint for diagnosing quiz photo delivery.
+    // Reports container CWD, asset dir resolution, file existence + sizes.
+    // No secret required — info is non-sensitive (just file names and sizes).
+    app.get('/debug/assets', (req, res) => {
+      const out = { cwd: process.cwd(), __dirname, paths: {} };
+      for (const sub of ['assets', 'assets/quiz']) {
+        const p = path.resolve(__dirname, '..', sub);
+        let entry = { path: p, exists: false };
+        try {
+          if (fs.existsSync(p)) {
+            entry.exists = true;
+            entry.entries = fs.readdirSync(p).map(name => {
+              try {
+                const st = fs.statSync(path.join(p, name));
+                return { name, size: st.size, isDir: st.isDirectory() };
+              } catch (e) { return { name, error: e.message }; }
+            });
+          }
+        } catch (e) { entry.error = e.message; }
+        out.paths[sub] = entry;
+      }
+      // Probe the 4 most-critical files explicitly.
+      const probes = [
+        'assets/quiz/quiz_welcome.png',
+        'assets/quiz/quiz_q1_patterns.png',
+        'assets/quiz/result_hot_cold.png',
+        'assets/quiz/booking_cta.png'
+      ];
+      out.probes = probes.map(rel => {
+        const p = path.resolve(__dirname, '..', rel);
+        let stat = null;
+        try { stat = fs.statSync(p); } catch (_) {}
+        return { rel, full: p, exists: !!stat, size: stat ? stat.size : null };
+      });
+      res.json(out);
     });
 
     // Serve admin panel (catch-all — must be LAST route)

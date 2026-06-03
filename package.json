@@ -1,6 +1,6 @@
 {
   "name": "altyn-therapy-bot",
-  "version": "6.1.0-quiz-photos",
+  "version": "6.1.1-quiz-photos-diag",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",

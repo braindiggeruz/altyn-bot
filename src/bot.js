@@ -59,14 +59,19 @@ const QUIZ_FLOW_IMAGES = {
 async function sendQuizPhoto(chatId, fileName, caption, extraOpts = {}) {
   const opts = { parse_mode: 'Markdown', ...extraOpts };
   if (fileName) {
-    try {
-      const imgPath = path.resolve(QUIZ_ASSET_DIR, fileName);
-      if (fs.existsSync(imgPath)) {
+    const imgPath = path.resolve(QUIZ_ASSET_DIR, fileName);
+    // v6.1.1: always log photo path + existence so we can diagnose remotely
+    // why a photo silently fell back to text. ONE log line per attempt.
+    let existsFlag = false;
+    try { existsFlag = fs.existsSync(imgPath); } catch (_) {}
+    console.log(`[quiz-photo] chat=${chatId} file=${fileName} path=${imgPath} exists=${existsFlag}`);
+    if (existsFlag) {
+      try {
         await bot.sendPhoto(chatId, imgPath, { caption, ...opts });
         return true;
+      } catch (e) {
+        console.error(`[quiz-photo] sendPhoto failed file=${fileName} chat=${chatId}: ${e.message}`);
       }
-    } catch (e) {
-      console.error(`[quiz photo] ${fileName} failed for ${chatId}:`, e.message);
     }
   }
   try {
@@ -1359,14 +1364,17 @@ async function sendQuizQuestion(chatId, index) {
   };
   let delivered = false;
   if (imgFile) {
-    try {
-      const imgPath = path.resolve(__dirname, '..', 'assets', 'quiz', imgFile);
-      if (fs.existsSync(imgPath)) {
+    const imgPath = path.resolve(QUIZ_ASSET_DIR, imgFile);
+    let existsFlag = false;
+    try { existsFlag = fs.existsSync(imgPath); } catch (_) {}
+    console.log(`[quiz-photo] chat=${chatId} q=Q${index + 1} file=${imgFile} path=${imgPath} exists=${existsFlag}`);
+    if (existsFlag) {
+      try {
         await bot.sendPhoto(chatId, imgPath, { caption, ...sendOpts });
         delivered = true;
+      } catch (photoErr) {
+        console.error(`[quiz Q${index + 1}] sendPhoto failed for ${chatId}, falling back to text:`, photoErr.message);
       }
-    } catch (photoErr) {
-      console.error(`[quiz Q${index + 1}] sendPhoto failed for ${chatId}, falling back to text:`, photoErr.message);
     }
   }
   if (!delivered) {
