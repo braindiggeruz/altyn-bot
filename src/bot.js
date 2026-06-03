@@ -20,6 +20,65 @@ import { TORNADO_DAYS, resolveTornadoText, TORNADO_MINI_DELIVERIES } from './tor
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ============================================================
+// v6 QUIZ ASSETS — 18 hand-illustrated images live in /assets/quiz/.
+// Image-key map kept here (not in content.js) so content.js stays pure
+// copy without filesystem coupling.
+// ============================================================
+const QUIZ_ASSET_DIR = path.resolve(__dirname, '..', 'assets', 'quiz');
+const QUIZ_WELCOME_IMAGE = 'quiz_welcome.png';
+const QUIZ_QUESTION_IMAGES = [
+  'quiz_q1_patterns.png',
+  'quiz_q2_silence.png',
+  'quiz_q3_after_conflict.png',
+  'quiz_q4_returning_thought.png',
+  'quiz_q5_losing_self.png',
+  'quiz_q6_let_go.png',
+  'quiz_q7_need_now.png'
+];
+const QUIZ_RESULT_IMAGES = {
+  hot_cold:    'result_hot_cold.png',
+  clarity:     'result_clarity.png',
+  savior:      'result_savior.png',
+  strong:      'result_strong.png',
+  distant:     'result_distant.png',
+  no_intimacy: 'result_no_intimacy.png',
+  // legacy scenario keys → closest v6 illustration
+  fear:        'result_hot_cold.png',
+  control:     'result_strong.png',
+  freeze:      'result_clarity.png'
+};
+const QUIZ_FLOW_IMAGES = {
+  booking_cta:     'booking_cta.png',
+  booking_success: 'booking_success.png',
+  direct_owner:    'direct_owner.png',
+  tornado:         'tornado_followup.png'
+};
+// Small helper: send a quiz asset as a photo with caption, or fall back to
+// a plain text message if the file is missing or the upload fails. The flow
+// MUST never get stuck — the keyboard/CTA must always reach the user.
+async function sendQuizPhoto(chatId, fileName, caption, extraOpts = {}) {
+  const opts = { parse_mode: 'Markdown', ...extraOpts };
+  if (fileName) {
+    try {
+      const imgPath = path.resolve(QUIZ_ASSET_DIR, fileName);
+      if (fs.existsSync(imgPath)) {
+        await bot.sendPhoto(chatId, imgPath, { caption, ...opts });
+        return true;
+      }
+    } catch (e) {
+      console.error(`[quiz photo] ${fileName} failed for ${chatId}:`, e.message);
+    }
+  }
+  try {
+    await bot.sendMessage(chatId, caption, opts);
+  } catch (mdErr) {
+    await bot.sendMessage(chatId, caption.replace(/[*_`]/g, ''),
+      extraOpts.reply_markup ? { reply_markup: extraOpts.reply_markup } : {});
+  }
+  return false;
+}
+
+// ============================================================
 // NOTIFICATION TARGETS
 // ============================================================
 const OWNER_ID = process.env.OWNER_TELEGRAM_ID || null;
@@ -446,8 +505,13 @@ export function initBot(token, app) {
       };
       let welcomeDelivered = false;
       try {
-        const imgPath = path.resolve(__dirname, '..', 'assets', 'welcome.png');
-        if (fs.existsSync(imgPath)) {
+        // v6: prefer the new branded quiz_welcome.png; fall back to legacy welcome.png.
+        const candidates = [
+          path.resolve(QUIZ_ASSET_DIR, QUIZ_WELCOME_IMAGE),
+          path.resolve(__dirname, '..', 'assets', 'welcome.png')
+        ];
+        for (const imgPath of candidates) {
+          if (!fs.existsSync(imgPath)) continue;
           try {
             // Telegram caption limit is 1024 — our cold text is short so caption is safe.
             await bot.sendPhoto(chatId, imgPath, {
@@ -456,8 +520,9 @@ export function initBot(token, app) {
               reply_markup: coldKb
             });
             welcomeDelivered = true;
+            break;
           } catch (photoErr) {
-            console.error(`Welcome photo failed for ${chatId}, falling back to text:`, photoErr.message);
+            console.error(`Welcome photo ${imgPath} failed for ${chatId}, trying next:`, photoErr.message);
           }
         }
       } catch (err) {
@@ -629,9 +694,12 @@ export function initBot(token, app) {
       });
       await removeKeyboard(chatId, messageId);
       const name = user?.first_name || '';
-      await bot.sendMessage(chatId, `📝 *Заявка на личный разбор сценария*\n\n_Личный разбор сценария — 60 минут онлайн за 10$._\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут?`, {
-        parse_mode: 'Markdown'
-      });
+      // v6: booking_cta.png illustration before the booking copy.
+      const bookingCaption =
+        `📝 *Заявка на личный разбор сценария*\n\n` +
+        `_Личный разбор сценария — 60 минут онлайн за 10$._\n\n` +
+        `${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут?`;
+      await sendQuizPhoto(chatId, QUIZ_FLOW_IMAGES.booking_cta, bookingCaption);
       await logEvent('BookingIntent', chatId, { from: data });
       await logEvent('booking_start', chatId, {});
       return;
@@ -662,7 +730,8 @@ export function initBot(token, app) {
         `🧭 Сценарий: ${escapeMd(user?.scenario || '—')}`
       );
       await removeKeyboard(chatId, messageId);
-      await bot.sendMessage(chatId,
+      // v6: direct_owner.png + the deep link + safety net buttons.
+      await sendQuizPhoto(chatId, QUIZ_FLOW_IMAGES.direct_owner,
         'Отлично 🤍\n\nНажмите кнопку ниже — откроется чат с Алтын.\n' +
         'Если удобнее — можете сразу оставить заявку или пройти короткий тест:',
         {
@@ -1137,8 +1206,8 @@ export function initBot(token, app) {
         });
         await logEvent('booking_complete', chatId, { name, request: updatedUser.booking_request, time: msg.text });
         await sendTyping(chatId, 1000);
-        await bot.sendMessage(chatId, BOOKING_CONFIRM_TEXT(escapeMd(name)), {
-          parse_mode: 'Markdown',
+        // v6: booking_success.png + confirm text + safety-net buttons.
+        await sendQuizPhoto(chatId, QUIZ_FLOW_IMAGES.booking_success, BOOKING_CONFIRM_TEXT(escapeMd(name)), {
           reply_markup: {
             inline_keyboard: [
               [{ text: '🎁 Пригласить друга (скидка 10%)', callback_data: 'get_referral' }],
@@ -1278,10 +1347,36 @@ async function sendQuizQuestion(chatId, index) {
     callback_data: `quiz_${index}_${i}`
   }]);
 
-  await bot.sendMessage(chatId, `${progress}\n\n*Вопрос ${index + 1}*\n\n${q.text}`, {
+  // q.text already starts with "*Вопрос N из 7*\n\n..." — no duplicate prefix.
+  const caption = `${progress}\n\n${q.text}`;
+
+  // v6: each question has its own image (quiz_q1_patterns / q2_silence / ...).
+  // Caption ≤ 1024 chars — our question texts are well under that.
+  const imgFile = QUIZ_QUESTION_IMAGES[index];
+  const sendOpts = {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: keyboard }
-  });
+  };
+  let delivered = false;
+  if (imgFile) {
+    try {
+      const imgPath = path.resolve(__dirname, '..', 'assets', 'quiz', imgFile);
+      if (fs.existsSync(imgPath)) {
+        await bot.sendPhoto(chatId, imgPath, { caption, ...sendOpts });
+        delivered = true;
+      }
+    } catch (photoErr) {
+      console.error(`[quiz Q${index + 1}] sendPhoto failed for ${chatId}, falling back to text:`, photoErr.message);
+    }
+  }
+  if (!delivered) {
+    try {
+      await bot.sendMessage(chatId, caption, sendOpts);
+    } catch (mdErr) {
+      console.error(`[quiz Q${index + 1}] markdown failed for ${chatId}:`, mdErr.message);
+      await bot.sendMessage(chatId, caption.replace(/[*_`]/g, ''), { reply_markup: sendOpts.reply_markup });
+    }
+  }
 }
 
 // ============================================================
@@ -1338,15 +1433,18 @@ async function sendQuizResult(chatId, answers) {
   // Telegram caption limit is 1024 chars — sending the full result.text as a
   // caption silently truncates and may break parse_mode.
   try {
-    const imgKey = result.image || scenario;
-    const imgPath = path.resolve(__dirname, '..', 'assets', `result_${imgKey}.png`);
+    // v6: use the new /assets/quiz/result_*.png illustrations.
+    const imgFile = QUIZ_RESULT_IMAGES[scenario];
     let imageSent = false;
-    if (fs.existsSync(imgPath)) {
-      try {
-        await bot.sendPhoto(chatId, imgPath, { caption: result.title || '' });
-        imageSent = true;
-      } catch (photoErr) {
-        console.error(`sendPhoto failed for ${chatId}, falling back to text-only:`, photoErr.message);
+    if (imgFile) {
+      const imgPath = path.resolve(QUIZ_ASSET_DIR, imgFile);
+      if (fs.existsSync(imgPath)) {
+        try {
+          await bot.sendPhoto(chatId, imgPath, { caption: result.title || '' });
+          imageSent = true;
+        } catch (photoErr) {
+          console.error(`sendPhoto failed for ${chatId}, falling back to text-only:`, photoErr.message);
+        }
       }
     }
     // Always send the full text as a separate message so result.text is never lost.
