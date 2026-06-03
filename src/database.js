@@ -65,6 +65,22 @@ export async function initDatabase() {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_source TEXT`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_medium TEXT`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_campaign TEXT`,
+      // v5.2: full deeplink attribution. start_param is the raw payload from
+      // /start (e.g. "src_site_hero"); creative/campaign/adset/ad_id are parsed
+      // out of it. lead_status tracks where the user is in the capture funnel
+      // independently of funnel_stage (which tracks quiz/booking progress).
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS start_param TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS creative TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS adset TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS ad_id TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS lead_status TEXT DEFAULT 'new'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_started_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_intent_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_submitted_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_notified_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS direct_owner_clicked_at TIMESTAMP`,
+      `CREATE INDEX IF NOT EXISTS idx_users_start_param ON users (start_param)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_lead_status ON users (lead_status)`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by TEXT`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS exit_reason TEXT`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS tags TEXT DEFAULT '[]'`,

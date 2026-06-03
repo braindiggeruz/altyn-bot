@@ -26,6 +26,9 @@ const PORT = process.env.PORT || 4000;
 const allowedOrigins = [
   'https://altyn-bot-production.up.railway.app',
   'https://altyn-therapy.uz',
+  'https://www.altyn-therapy.uz',
+  'https://bot.altyn-therapy.uz',
+  'https://admin.altyn-therapy.uz',
   'http://localhost:3000',
   'http://localhost:4000'
 ];
@@ -53,7 +56,13 @@ async function startApp() {
     console.log('✅ Database ready');
 
     // Init Telegram bot (webhook in production, polling in dev)
-    const BOT_TOKEN = process.env.BOT_TOKEN || '8698863140:AAEZE-iDU9T9RkUwmtl00SvVzY0srM1woqw';
+    // SECURITY v5.2: NEVER fall back to a hard-coded token. If BOT_TOKEN is
+    // missing the bot fails fast — that is the desired behaviour.
+    const BOT_TOKEN = process.env.BOT_TOKEN;
+    if (!BOT_TOKEN) {
+      console.error('❌ FATAL: BOT_TOKEN is not set. Refusing to start.');
+      process.exit(1);
+    }
     const botInstance = initBot(BOT_TOKEN, app);
     // Make sure bot is available globally for cron jobs
     setBot(botInstance);
@@ -135,6 +144,23 @@ async function startApp() {
       const minIdleDays = req.query.min_idle_days !== undefined ? parseInt(req.query.min_idle_days, 10) : 7;
       const r = await runOnce(`manual:tornado:batch:${limit}:${minIdleDays}`, () => sendTornadoReactivation({
         limit, minIdleDays, source: 'batch'
+      }));
+      res.json({ ok: true, limit, minIdleDays, result: r });
+    });
+
+    // v5.2 aliases (problem-statement contract): /admin/v52/followup/*
+    app.post('/admin/v52/followup/dry-run', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
+      const r = await sendTornadoReactivation({ dryRun: true, limit, source: 'v52-dry-run' });
+      res.json({ ok: true, result: r });
+    });
+    app.post('/admin/v52/followup/run-batch', async (req, res) => {
+      if (!requireSecret(req, res)) return;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '3', 10) || 3, 1), 100);
+      const minIdleDays = req.query.min_idle_days !== undefined ? parseInt(req.query.min_idle_days, 10) : 7;
+      const r = await runOnce(`v52:batch:${limit}:${minIdleDays}`, () => sendTornadoReactivation({
+        limit, minIdleDays, source: 'v52-batch'
       }));
       res.json({ ok: true, limit, minIdleDays, result: r });
     });
@@ -234,7 +260,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '4.9.1',
+        version: '5.2.0',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),

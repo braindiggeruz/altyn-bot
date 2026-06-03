@@ -1,6 +1,6 @@
 {
   "name": "altyn-therapy-bot",
-  "version": "4.9.1",
+  "version": "5.2.0",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
