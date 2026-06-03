@@ -57,16 +57,16 @@ jobs:
             fi
           '
 
-      - name: Verify /health reports 5.2.0
+      - name: Verify /health reports current major
         run: |
           for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
             V=$(curl -fsS -m 5 https://bot.altyn-therapy.uz/health | python3 -c "import json,sys;print(json.load(sys.stdin).get('version',''))" || echo "")
             echo "attempt $i: version=$V"
-            if [[ "$V" =~ ^5\.2 ]]; then
+            if [[ "$V" =~ ^(5\.2|6\.) ]]; then
               echo "::notice::Bot deployed, version=$V"
               exit 0
             fi
             sleep 5
           done
-          echo "::error::Bot did not report version 5.2.x within 60s"
+          echo "::error::Bot did not report version 5.2.x or 6.x within 60s"
           exit 1

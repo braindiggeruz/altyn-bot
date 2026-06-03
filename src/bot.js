@@ -301,22 +301,33 @@ export function initBot(token, app) {
     return out;
   }
 
-  // Hot start params trigger the 3-button welcome (booking / quiz / direct).
-  // For everything else we keep the original single-button "Пройти тест" flow.
+  // v6 QUIZ-FIRST: only truly high-intent sources go straight to booking-first
+  // welcome. Everything else (site_hero/quiz/sticky/footer/faq, ig_*, google_*)
+  // sees the quiz-first welcome with 3 buttons (quiz / book / direct).
   const HOT_START_PARAMS = new Set([
-    'src_site_hero', 'src_site_hot_10usd', 'src_site_sticky',
+    'src_site_hot_10usd',
     'src_owner_reactivation',
-    'src_ig_online_silence', 'src_ig_hot_cold', 'src_ig_scenario_10usd',
-    'src_google_search', 'src_google_relationship', 'src_google_hypno'
+    'src_direct_cta'
   ]);
   function isHotStart(sp) {
     if (!sp) return false;
     if (HOT_START_PARAMS.has(sp)) return true;
-    return /^src_(owner|google)_/.test(sp) || /^src_ig_(hot|scenario|online)/.test(sp);
+    return /^src_owner_/.test(sp) || /^src_direct_/.test(sp);
   }
-  const HOT_WELCOME_TEXT =
+  // HOT welcome — booking-first. Imported from content.js for consistency.
+  const HOT_WELCOME_TEXT_INLINE =
     'Здравствуйте 🤍\n\n' +
-    'Вижу, вы пришли на личный *разбор сценария*. Можно оставить заявку на разбор за *10$* или сначала пройти короткий тест и понять, какой сценарий повторяется.';
+    'Вижу, вы пришли на личный *разбор сценария* — 60 минут онлайн за *10$*.\n\n' +
+    'Можно оставить заявку на разбор или сначала пройти короткий тест и понять, какой сценарий повторяется.';
+
+  // COLD welcome — quiz-first. Bережно, без давления.
+  const COLD_WELCOME_TEXT_INLINE =
+    'Здравствуйте 🤍\n\n' +
+    'Этот короткий тест поможет увидеть, какой сценарий может повторяться в отношениях.\n\n' +
+    '💬 Он то рядом, то исчезает?\n' +
+    '🔁 Отношения будто идут по кругу?\n' +
+    '🧠 Умом понимаете, а отпустить сложно?\n\n' +
+    'Это не диагноз и не оценка — только бережная подсказка, с чего начать.';
 
   // /start command
   bot.onText(/\/start(.*)/, async (msg, match) => {
@@ -406,9 +417,10 @@ export function initBot(token, app) {
       }
     }
 
-    // Welcome: hot leads get the 3-button choice (book / quiz / direct).
-    // Cold leads keep the original single-button "Пройти тест" path so the
-    // existing funnel and assets are untouched.
+    // v6 Welcome:
+    //   HOT  → booking-first (10$ first, then quiz, then direct)
+    //   COLD → quiz-first    (quiz first, then 10$, then direct)
+    // Both flows use a 3-button keyboard so we never lose the user.
     if (hot) {
       const hotKb = {
         inline_keyboard: [
@@ -418,27 +430,30 @@ export function initBot(token, app) {
         ]
       };
       try {
-        await bot.sendMessage(chatId, HOT_WELCOME_TEXT, { parse_mode: 'Markdown', reply_markup: hotKb });
+        await bot.sendMessage(chatId, HOT_WELCOME_TEXT_INLINE, { parse_mode: 'Markdown', reply_markup: hotKb });
       } catch (e) {
-        await bot.sendMessage(chatId, HOT_WELCOME_TEXT.replace(/[*_`]/g, ''), { reply_markup: hotKb });
+        await bot.sendMessage(chatId, HOT_WELCOME_TEXT_INLINE.replace(/[*_`]/g, ''), { reply_markup: hotKb });
       }
     } else {
-      // v4.9.0: Bullet-proof welcome delivery. Photo is optional decoration; the
-      // "Пройти тест" button MUST always reach the user.
-      const welcomeKeyboard = {
-        inline_keyboard: [[
-          { text: '🔮 Пройти тест', callback_data: 'quiz_start' }
-        ]]
+      // COLD — quiz-first welcome. Keep welcome image for warmth, but the
+      // primary CTA is the quiz, not the booking.
+      const coldKb = {
+        inline_keyboard: [
+          [{ text: '🔮 Пройти тест сценария',     callback_data: 'quiz_start' }],
+          [{ text: '💎 Хочу сразу разбор за 10$', callback_data: 'book_diagnostic' }],
+          [{ text: '💬 Написать Алтын напрямую',   callback_data: 'direct_owner' }]
+        ]
       };
       let welcomeDelivered = false;
       try {
         const imgPath = path.resolve(__dirname, '..', 'assets', 'welcome.png');
         if (fs.existsSync(imgPath)) {
           try {
+            // Telegram caption limit is 1024 — our cold text is short so caption is safe.
             await bot.sendPhoto(chatId, imgPath, {
-              caption: WELCOME_TEXT,
+              caption: COLD_WELCOME_TEXT_INLINE,
               parse_mode: 'Markdown',
-              reply_markup: welcomeKeyboard
+              reply_markup: coldKb
             });
             welcomeDelivered = true;
           } catch (photoErr) {
@@ -450,14 +465,14 @@ export function initBot(token, app) {
       }
       if (!welcomeDelivered) {
         try {
-          await bot.sendMessage(chatId, WELCOME_TEXT, {
+          await bot.sendMessage(chatId, COLD_WELCOME_TEXT_INLINE, {
             parse_mode: 'Markdown',
-            reply_markup: welcomeKeyboard
+            reply_markup: coldKb
           });
         } catch (mdErr) {
           console.error(`Welcome markdown failed for ${chatId}, sending plain:`, mdErr.message);
-          await bot.sendMessage(chatId, WELCOME_TEXT.replace(/[*_`]/g, ''), {
-            reply_markup: welcomeKeyboard
+          await bot.sendMessage(chatId, COLD_WELCOME_TEXT_INLINE.replace(/[*_`]/g, ''), {
+            reply_markup: coldKb
           });
         }
       }
@@ -551,6 +566,7 @@ export function initBot(token, app) {
 
       answers.push({ question: qIndex, answer: aIndex });
       await updateUser(chatId, { quiz_answers: JSON.stringify(answers) });
+      await logEvent('QuizQuestionAnswered', chatId, { q: qIndex, a: aIndex });
       await removeKeyboard(chatId, messageId);
 
       if (qIndex + 1 < QUIZ_QUESTIONS.length) {
@@ -593,7 +609,7 @@ export function initBot(token, app) {
     if (data === 'book_diagnostic') {
       const user = await getUser(chatId);
       if (user && ['booked', 'confirmed', 'completed'].includes(user.booking_status)) {
-        await bot.sendMessage(chatId, '✅ Вы уже записаны на диагностику! Если нужно изменить время — напишите в WhatsApp.', {
+        await bot.sendMessage(chatId, '✅ Вы уже записаны на разбор! Если нужно изменить время — напишите в WhatsApp.', {
           reply_markup: {
             inline_keyboard: [
               [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
@@ -613,7 +629,7 @@ export function initBot(token, app) {
       });
       await removeKeyboard(chatId, messageId);
       const name = user?.first_name || '';
-      await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
+      await bot.sendMessage(chatId, `📝 *Заявка на личный разбор сценария*\n\n_Личный разбор сценария — 60 минут онлайн за 10$._\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут?`, {
         parse_mode: 'Markdown'
       });
       await logEvent('BookingIntent', chatId, { from: data });
@@ -812,7 +828,7 @@ export function initBot(token, app) {
       await bot.sendMessage(chatId, text, {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [
-          [{ text: '📅 Записаться на бесплатную диагностику', callback_data: `tornado_book_d${day}` }],
+          [{ text: '📅 Записаться на личный разбор сценария', callback_data: `tornado_book_d${day}` }],
           [{ text: '💬 Задать вопрос Алтын',                    callback_data: `tornado_ask_d${day}` }]
         ] }
       }).catch(async () => {
@@ -851,7 +867,7 @@ export function initBot(token, app) {
         await logEvent('booking_start', chatId, { from: `tornado_d${day}` });
         const usr = await getUser(chatId);
         const name = usr?.first_name || '';
-        await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
+        await bot.sendMessage(chatId, `📝 *Заявка на личный разбор сценария*\n\n_Личный разбор сценария — 60 минут онлайн за 10$._\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут?`, {
           parse_mode: 'Markdown'
         });
         return;
@@ -864,7 +880,7 @@ export function initBot(token, app) {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
-                [{ text: '📅 Записаться на диагностику', callback_data: `tornado_book_d${day}` }],
+                [{ text: '📅 Оставить заявку на разбор', callback_data: `tornado_book_d${day}` }],
                 [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
               ]
             }
@@ -881,9 +897,9 @@ export function initBot(token, app) {
       if (kind === 'yes') {
         await bot.sendMessage(chatId,
           `🤍 Спасибо, что отозвались. Это уже шаг.\n\n` +
-          `Если хотите — могу прислать короткий разбор именно вашего сценария или сразу записать на диагностику.`,
+          `Если хотите — могу прислать короткий разбор именно вашего сценария или сразу записать на разбор.`,
           { reply_markup: { inline_keyboard: [
-            [{ text: '📅 Записаться на бесплатную диагностику', callback_data: `tornado_book_d${day}` }],
+            [{ text: '📅 Записаться на личный разбор сценария', callback_data: `tornado_book_d${day}` }],
             [{ text: '⏸ Чуть позже',                              callback_data: `tornado_later_d${day}` }]
           ] } }
         );
@@ -958,7 +974,7 @@ export function initBot(token, app) {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
+              [{ text: '📝 Оставить заявку на разбор', callback_data: 'book_diagnostic' }],
               [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
             ]
           }
@@ -1108,7 +1124,8 @@ export function initBot(token, app) {
           funnel_stage: 'booked',
           lead_status: 'booking_submitted',
           booking_submitted_at: new Date().toISOString(),
-          owner_notified_at: new Date().toISOString()
+          owner_notified_at: new Date().toISOString(),
+          temperature: 'hot'
         });
         const updatedUser = await getUser(chatId);
         const name = updatedUser.booking_name || updatedUser.first_name || 'друг';
@@ -1131,21 +1148,30 @@ export function initBot(token, app) {
           }
         });
 
-        // AUTO-HANDOFF: Notify admin group with full lead details
+        // AUTO-HANDOFF v6: notify owner with the full lead card matching the
+        // spec (Имя / Username / Запрос / Удобное время / Сценарий / Source /
+        // Creative / Start param / Temperature / Lead status).
         const scenario = updatedUser.scenario || 'не определён';
         const scenarioTitle = SCENARIO_RESULTS[updatedUser.scenario]?.title || scenario;
         const uname = updatedUser.username ? `@${updatedUser.username}` : 'нет username';
-        const ownerMsg = `🔥🔥🔥 *ГОРЯЧИЙ ЛИД!*\n\n` +
-          `👤 *Имя:* ${escapeMd(updatedUser.booking_name)}\n` +
-          `📱 *Telegram:* ${escapeMd(uname)}\n` +
+        const recommendedReply =
+          `Здравствуйте, ${updatedUser.booking_name || 'друг'} 🤍 Вижу, у вас откликнулся сценарий «${scenarioTitle}». ` +
+          `На разборе мы бережно посмотрим, где он запускается именно у вас и какой первый шаг поможет вернуть ясность. ` +
+          `Подтверждаю время: ...`;
+        const ownerMsg = `🔥 *ГОРЯЧИЙ ЛИД*\n\n` +
+          `👤 *Имя:* ${escapeMd(updatedUser.booking_name || '—')}\n` +
+          `📱 *Username:* ${escapeMd(uname)}\n` +
           `🆔 *ID:* \`${chatId}\`\n` +
-          `🎭 *Сценарий:* ${escapeMd(scenarioTitle)}\n` +
-          `📝 *Запрос:* ${escapeMd(updatedUser.booking_request)}\n` +
-          `📅 *Время:* ${escapeMd(msg.text)}\n` +
-          `📊 *Источник:* ${escapeMd(updatedUser.source || 'organic')}\n` +
-          `${updatedUser.utm_campaign ? `📎 *Кампания:* ${escapeMd(updatedUser.utm_campaign)}\n` : ''}` +
-          `\n⚡ *Действие:* Свяжитесь в течение 30 минут!\n` +
-          `📞 Написать: tg://user?id=${chatId}`;
+          `📝 *Запрос:* ${escapeMd(updatedUser.booking_request || '—')}\n` +
+          `📅 *Удобное время:* ${escapeMd(msg.text)}\n` +
+          `🧭 *Сценарий:* ${escapeMd(scenarioTitle)}\n` +
+          `📊 *Source:* ${escapeMd(updatedUser.source || 'organic')}\n` +
+          `🎨 *Creative:* ${escapeMd(updatedUser.creative || '—')}\n` +
+          `🔗 *Start param:* \`${escapeMd(updatedUser.start_param || '—')}\`\n` +
+          `🌡 *Temperature:* hot\n` +
+          `🏷 *Lead status:* booking_submitted\n\n` +
+          `📞 tg://user?id=${chatId}\n\n` +
+          `_Рекомендованный ответ:_\n${escapeMd(recommendedReply)}`;
 
         await notifyAdmin(ownerMsg, {
           reply_markup: {
@@ -1170,14 +1196,15 @@ export function initBot(token, app) {
   // COMMANDS
   // ============================================================
   bot.onText(/\/help/, async (msg) => {
-    await bot.sendMessage(msg.chat.id, '🔮 *Алтын | Гипнотерапевт*\n\n' +
+    await bot.sendMessage(msg.chat.id, '🤍 *Алтын | гипнотерапевт*\n\n' +
       '📋 Доступные команды:\n' +
       '/start — Начать сначала\n' +
-      '/quiz — Пройти тест\n' +
-      '/book — Записаться на диагностику\n' +
+      '/quiz — Пройти тест сценария\n' +
+      '/book — Оставить заявку на разбор\n' +
       '/referral — Пригласить друга\n' +
+      '/stop — Отписаться от напоминаний\n' +
       '/help — Помощь\n\n' +
-      '💬 WhatsApp: +7 707 719 85 61', {
+      '_Личный разбор сценария — 60 минут онлайн за 10$._', {
       parse_mode: 'Markdown'
     });
   });
@@ -1199,13 +1226,16 @@ export function initBot(token, app) {
       booking_name: null,
       booking_request: null,
       booking_time: null,
-      booking_started_at: new Date().toISOString()
+      booking_started_at: new Date().toISOString(),
+      booking_intent_at: new Date().toISOString(),
+      lead_status: 'booking_intent'
     });
     const user = await getUser(chatId);
     const name = user?.first_name || '';
-    await bot.sendMessage(chatId, `📝 *Запись на бесплатную диагностику*\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут? (Имя и фамилия)`, {
+    await bot.sendMessage(chatId, `📝 *Заявка на личный разбор сценария*\n\n_Личный разбор сценария — 60 минут онлайн за 10$._\n\n${name ? `${escapeMd(name)}, к` : 'К'}ак вас зовут?`, {
       parse_mode: 'Markdown'
     });
+    await logEvent('BookingIntent', chatId, { from: '/book' });
   });
 
   bot.onText(/\/referral/, async (msg) => {
@@ -1258,7 +1288,9 @@ async function sendQuizQuestion(chatId, index) {
 // QUIZ RESULT CALCULATOR
 // ============================================================
 async function sendQuizResult(chatId, answers) {
-  const scores = { savior: 0, fear: 0, control: 0, freeze: 0 };
+  // v6: 6 scenarios + deterministic tie-breaker priority.
+  const SCENARIO_PRIORITY = ['hot_cold', 'distant', 'clarity', 'savior', 'strong', 'no_intimacy'];
+  const scores = { hot_cold: 0, distant: 0, clarity: 0, savior: 0, strong: 0, no_intimacy: 0 };
 
   for (const a of answers) {
     const q = QUIZ_QUESTIONS[a.question];
@@ -1269,7 +1301,12 @@ async function sendQuizResult(chatId, answers) {
     }
   }
 
-  const scenario = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
+  // Pick scenario: max score, with priority tie-breaker.
+  let scenario = SCENARIO_PRIORITY[0];
+  let best = -1;
+  for (const s of SCENARIO_PRIORITY) {
+    if (scores[s] > best) { best = scores[s]; scenario = s; }
+  }
   const result = SCENARIO_RESULTS[scenario];
 
   if (!result) {
@@ -1277,6 +1314,8 @@ async function sendQuizResult(chatId, answers) {
     return;
   }
 
+  // v6 temperature: hot if booking_intent/direct_click later; for now mark warm
+  // because they completed the quiz. Becomes hot on booking_intent.
   await updateUser(chatId, {
     scenario,
     quiz_score: JSON.stringify(scores),
@@ -1285,7 +1324,8 @@ async function sendQuizResult(chatId, answers) {
     warmup_day: 0,
     quiz_completed_at: new Date().toISOString(),
     last_warmup_sent_at: null,
-    lead_status: 'quiz_completed'
+    lead_status: 'quiz_completed',
+    temperature: 'warm'
   });
   await logEvent('QuizComplete', chatId, { scenario, scores });
   await logEvent('ScenarioGenerated', chatId, { scenario });
@@ -1324,23 +1364,34 @@ async function sendQuizResult(chatId, answers) {
     } catch(e) {}
   }
 
-  // Send CTA after result
-  await new Promise(r => setTimeout(r, 2000));
-  await bot.sendMessage(chatId, `🔑 *Что дальше?*\n\nТеперь, когда вы знаете свой сценарий, вы можете:\n\n1️⃣ Записаться на *бесплатную диагностику* — я помогу разобраться глубже\n2️⃣ Получать полезные материалы по вашему сценарию\n\n_Диагностика длится 30 минут и проходит онлайн_`, {
+  // v6: Bережный CTA после результата. Кнопки точно по спеке.
+  await new Promise(r => setTimeout(r, 1500));
+  await bot.sendMessage(chatId,
+    `🤍 *Что дальше?*\n\n` +
+    `Это не диагноз, а подсказка. Если откликнулось, можно бережно разобрать ваш сценарий лично с Алтын.\n\n` +
+    `*Личный разбор сценария — 60 минут онлайн за 10$.*`, {
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '📝 Записаться на бесплатную диагностику', callback_data: 'book_diagnostic' }],
-        [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }],
-        [{ text: '📸 Instagram', url: 'https://instagram.com/altyn.therapy' }]
+        [{ text: '💎 Хочу разобрать сценарий за 10$', callback_data: 'book_diagnostic' }],
+        [{ text: '💬 Написать Алтын напрямую',        callback_data: 'direct_owner' }],
+        [{ text: '🔄 Пройти тест заново',             callback_data: 'restart_quiz' }]
       ]
     }
   });
+  await logEvent('ResultViewed', chatId, { scenario });
+  await updateUser(chatId, {
+    result_viewed_at: new Date().toISOString(),
+    lead_status: 'result_viewed'
+  }, true);
 
   // Notify admin about quiz completion — full lead card
   const user = await getUser(chatId);
   const uname = user?.username ? `@${user.username}` : 'нет username';
-  const scenarioEmoji = { savior: '🛡', fear: '💔', control: '🎯', freeze: '❄️' }[scenario] || '🎭';
+  const scenarioEmoji = {
+    hot_cold: '🌗', clarity: '🌫', savior: '🛡', strong: '💪', distant: '🌑', no_intimacy: '🪞',
+    fear: '💔', control: '🎯', freeze: '❄️'
+  }[scenario] || '🤍';
   const scenarioTitle = result.title || scenario;
   const scoreStr = Object.entries(scores)
     .sort((a, b) => b[1] - a[1])
@@ -1417,7 +1468,7 @@ export async function sendWarmupMessages() {
 
     const keyboard = nextDay >= 5 ? {
       inline_keyboard: [
-        [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
+        [{ text: '📝 Оставить заявку на разбор', callback_data: 'book_diagnostic' }],
         [{ text: '💬 WhatsApp', url: 'https://wa.me/77077198561' }]
       ]
     } : undefined;
@@ -1636,7 +1687,7 @@ export async function sendReminders() {
       const name = escapeMd(user.booking_name || user.first_name || 'друг');
       const time = escapeMd(user.booking_time || 'запланированное время');
       return {
-        text: `🔔 *Напоминание о диагностике*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nДиагностика пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите в WhatsApp, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
+        text: `🔔 *Напоминание о разборе*\n\n${name}, напоминаю о нашей встрече!\n\n📅 *Время:* ${time}\n\nЛичный разбор сценария пройдёт онлайн — ссылку я пришлю за 15 минут до начала.\n\nЕсли нужно перенести — напишите в WhatsApp, договоримся.\n\n_До встречи! 🙏\nАлтын, гипнотерапевт_`,
         options: {
           parse_mode: 'Markdown',
           reply_markup: {
@@ -1663,16 +1714,27 @@ export async function sendReminders() {
     build: async (user) => {
       const name = escapeMd(user.first_name || 'друг');
       const scenario = user.scenario || 'freeze';
-      const scenarioEmoji = { savior: '🛡', fear: '💔', control: '🎯', freeze: '❄️' }[scenario] || '🎭';
-      const scenarioNames = { savior: 'Спасатель', fear: 'Страх близости', control: 'Гиперконтроль', freeze: 'Заморозка' };
+      const scenarioEmoji = {
+    hot_cold: '🌗', clarity: '🌫', savior: '🛡', strong: '💪', distant: '🌑', no_intimacy: '🪞',
+    fear: '💔', control: '🎯', freeze: '❄️'
+  }[scenario] || '🤍';
+      const scenarioNames = {
+        hot_cold: 'То тепло, то холод',
+        clarity:  'Туман — нет ясности',
+        savior:   'Спасатель',
+        strong:   'Сильная женщина',
+        distant:  'Недоступные люди',
+        no_intimacy: 'Близость без близости',
+        fear: 'Тревога и страх близости', control: 'Сильная женщина', freeze: 'Туман — нет ясности'
+      };
       const scenarioName = scenarioNames[scenario] || scenario;
       return {
-        text: `${scenarioEmoji} *${name}, вы ещё думаете?*\n\nНеделю назад вы прошли тест и узнали свой сценарий — *«${scenarioName}»*.\n\nЯ понимаю: принять решение непросто. Но пока вы думаете, сценарий продолжает работать. Каждый день.\n\n*Вот что происходит в вашей психике:*\n◇ Сценарий автоматически повторяется в отношениях\n◇ Вы теряете возможности и деньги\n◇ Каждый день становится сложнее\n\n💬 Я предлагаю просто поговорить — 30 минут, бесплатно, без обязательств. На диагностике вы:\n◇ Поймёте корень проблемы\n◇ Почувствуете первые изменения\n◇ Узнаете план работы\n\nМест на этой неделе осталось немного. Запишитесь сейчас 👇`,
+        text: `${scenarioEmoji} *${name}, мягкое напоминание.*\n\nНеделю назад вы прошли тест и увидели свой сценарий — *«${scenarioName}»*.\n\nИногда увидеть сценарий — это уже шаг. Но рядом со сценарием часто остаётся ощущение «опять то же самое».\n\nЕсли хочется бережно посмотреть, как этот сценарий запускается именно у вас и где появляется выход — можно оставить заявку на разбор.\n\n💬 *Личный разбор сценария — 60 минут онлайн за 10$.* Без давления, в удобное время 👇`,
         options: {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '📝 Записаться на диагностику', callback_data: 'book_diagnostic' }],
+              [{ text: '📝 Оставить заявку на разбор', callback_data: 'book_diagnostic' }],
               [{ text: '💬 Написать в WhatsApp', url: 'https://wa.me/77077198561' }]
             ]
           }
@@ -1693,7 +1755,7 @@ export async function sendReminders() {
   for (const user of postSessionResult.rows) {
     const name = escapeMd(user.booking_name || user.first_name || 'друг');
     const sendRes = await sendSafe('sendMessage', user.telegram_id,
-      `🌟 *${name}, как прошла диагностика?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса. Это уже результат.\n\n*Что заметили клиенты после диагностики:*\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже и менять ситуацию\n\n*Следующий шаг:*\nПолная программа гипнотерапии (8 сессий) даёт *устойчивый результат*. Многие клиенты видят изменения уже после 3-4 сессий.\n\n💰 *Цена:* 50,000 тенге за программу (или 7,000 за сессию)\n⏱️ *Длительность:* 1 месяц (2 сессии в неделю)\n✅ *Гарантия:* Если не почувствуете результат — вернём 50% стоимости\n\n_Напишите мне — обсудим ваш путь._`,
+      `🌟 *${name}, как прошла личный разбор сценария?*\n\nНадеюсь, вы почувствовали ясность и понимание своего запроса. Это уже результат.\n\n*Что заметили клиенты после разбора:*\n◇ Стало легче — просто от того, что поговорили\n◇ Появилось понимание, откуда растёт проблема\n◇ Захотелось идти глубже и менять ситуацию\n\n*Следующий шаг:*\nПолная программа гипнотерапии (нескольких встреч) даёт *устойчивый результат*. Многие клиенты видят изменения уже после 3-4 сессий.\n\n💰 *Цена:* 50,000 тенге за программу (или 7,000 за сессию)\n⏱️ *Длительность:* 1 месяц (2 сессии в неделю)\n✅ *Гарантия:* Если не почувствуете результат — вернём 50% стоимости\n\n_Напишите мне — обсудим ваш путь._`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
