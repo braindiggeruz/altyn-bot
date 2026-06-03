@@ -144,6 +144,12 @@ export async function initDatabase() {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_started_at TIMESTAMP`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_completed_at TIMESTAMP`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS booking_confirmed_at TIMESTAMP`,
+      // v6 QUIZ-FIRST: result/temperature/next-followup tracking.
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS result_viewed_at TIMESTAMP`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS temperature TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS next_followup_at TIMESTAMP`,
+      `CREATE INDEX IF NOT EXISTS idx_users_temperature ON users (temperature)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_next_followup_at ON users (next_followup_at)`,
       // v4.8.0: Drop NOT NULL on legacy "openId" column if present (caused /start crashes on prod).
       // The column was created by an earlier deploy that no longer exists in code.
       // We make it nullable + give a default so old code paths that touched it still work,

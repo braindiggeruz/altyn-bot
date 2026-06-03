@@ -15,7 +15,9 @@ set -euo pipefail
 cd /srv/altyn
 
 echo ">> 1/6  Pull latest bot code"
-# Try the most common repo locations.
+# v6 deploy: production /srv/altyn typically has NO .git directory — the code
+# was originally rsync'd there. We detect this and use the safe rsync-from-
+# fresh-clone path. When /srv/altyn IS a git repo we just fetch+reset.
 REPO_DIR=""
 for d in /srv/altyn/altyn-bot /srv/altyn/bot /srv/altyn; do
   if [ -d "$d/.git" ]; then REPO_DIR="$d"; break; fi
@@ -27,8 +29,19 @@ if [ -n "$REPO_DIR" ]; then
   git reset --hard origin/main
   cd /srv/altyn
 else
-  echo "   !! no git working tree found under /srv/altyn/{altyn-bot,bot,.}"
-  echo "   docker compose build below will use whatever build context is in compose file"
+  echo "   no .git tree under /srv/altyn — using rsync-from-fresh-clone path"
+  rm -rf /tmp/altyn-bot-main
+  git clone --depth=1 https://github.com/braindiggeruz/altyn-bot.git /tmp/altyn-bot-main
+  rsync -av --delete-after \
+    --exclude='.git' \
+    --exclude='.env' \
+    --exclude='.env.*' \
+    --exclude='backups' \
+    --exclude='docker-compose.yml' \
+    --exclude='docker-compose.yaml' \
+    --exclude='node_modules' \
+    /tmp/altyn-bot-main/ /srv/altyn/
+  cd /srv/altyn
 fi
 
 echo ">> 2/6  Backup the database before migration"
@@ -44,17 +57,19 @@ docker compose up -d app
 # Optional: prune dangling old images so disk stays sane on the nanode.
 docker image prune -f --filter "until=24h" >/dev/null 2>&1 || true
 
-echo ">> 4/6  Wait for /health to report version 5.2.0"
-for i in 1 2 3 4 5 6 7 8 9 10; do
+echo ">> 4/6  Wait for /health to report v6 (quiz-first)"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   V=$(curl -fsS -m 5 https://bot.altyn-therapy.uz/health | python3 -c "import json,sys;print(json.load(sys.stdin).get('version'))" 2>/dev/null || echo "")
   echo "   attempt $i: version=$V"
-  if [ "$V" = "5.2.0" ]; then break; fi
+  case "$V" in
+    6.*|5.2*) break ;;
+  esac
   sleep 3
 done
 
-echo ">> 5/6  Verify migration applied (new columns present)"
+echo ">> 5/6  Verify migration applied (v6 columns present)"
 docker compose exec -T postgres psql -U altyn -d altyn -c "\d users" \
-  | grep -E "start_param|creative|lead_status|telegram_started_at|booking_intent_at|booking_submitted_at|owner_notified_at|direct_owner_clicked_at" \
+  | grep -E "start_param|creative|lead_status|result_viewed_at|temperature|next_followup_at|booking_intent_at|booking_submitted_at|owner_notified_at|direct_owner_clicked_at" \
   || { echo "!! Migration columns missing!"; exit 1; }
 
 echo ">> 6/6  Smoke test analytics events table"

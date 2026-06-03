@@ -260,7 +260,7 @@ async function startApp() {
 
       res.json({
         status: 'ok',
-        version: '5.2.0',
+        version: '6.0.0-quiz-first',
         mode: WEBHOOK_URL ? 'webhook' : 'polling',
         database: 'postgresql',
         uptime: process.uptime(),
