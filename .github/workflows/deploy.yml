@@ -2,22 +2,28 @@ name: Deploy to VPS
 
 # Auto-deploy the bot to production when main changes.
 #
-# One-time setup (owner action):
+# One-time setup (owner action, ~30 seconds):
 #   GitHub repo Settings → Secrets and variables → Actions → New repository secret
-#     VPS_SSH_KEY        — paste the contents of /app/altyn-ops/ssh/altyn_deploy_ed25519
-#                          (private key, OpenSSH format, BEGIN OPENSSH PRIVATE KEY)
-#     VPS_HOST           — 139.162.188.102
-#     VPS_USER           — root
-#     VPS_KNOWN_HOST     — run on VPS:  ssh-keyscan -t ed25519 139.162.188.102
-#                          (paste the single line that comes out)
+#     VPS_SSH_KEY  — paste the contents of /app/altyn-ops/ssh/altyn_deploy_ed25519
+#                    (the OpenSSH private key, starts with `-----BEGIN OPENSSH PRIVATE KEY-----`)
 #
-# After secrets exist, every push to `main` (e.g. PR merge) triggers `deploy.sh`
-# on the VPS with no downtime longer than a container restart.
+# That's the ONLY secret you need. VPS_HOST, VPS_USER and VPS_KNOWN_HOST are
+# baked in below (host is the public IP of the production Linode; known_host
+# is the ed25519 fingerprint captured 2026-06-03).
+#
+# After the secret is added, every push to `main` (e.g. PR merge) triggers
+# `deploy.sh` on the VPS with no downtime longer than a container restart.
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
+
+env:
+  VPS_HOST: 139.162.188.102
+  VPS_USER: root
+  # Public ed25519 host key fingerprint — safe to commit, lets us avoid TOFU.
+  VPS_KNOWN_HOST: '139.162.188.102 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHN13IGp9QVIWCS4uVlFQXYrYgY9W4iYG1GSHuwcMJ0c'
 
 jobs:
   deploy:
@@ -28,15 +34,16 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
+          if [ -z "${{ secrets.VPS_SSH_KEY }}" ]; then
+            echo "::error::Repo secret VPS_SSH_KEY is empty. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          echo "${{ secrets.VPS_KNOWN_HOST }}" > ~/.ssh/known_hosts
+          echo "$VPS_KNOWN_HOST" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Run deploy.sh on VPS
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "${VPS_USER}@${VPS_HOST}" '
             set -euo pipefail
@@ -44,7 +51,6 @@ jobs:
             if [ -f /srv/altyn/altyn-bot/deploy.sh ]; then
               bash /srv/altyn/altyn-bot/deploy.sh
             else
-              # Fallback if the repo lives elsewhere
               cd /srv/altyn/altyn-bot && git fetch origin main && git reset --hard origin/main
               cd /srv/altyn && docker compose build app && docker compose up -d app
               sleep 8 && curl -fsS https://bot.altyn-therapy.uz/health
