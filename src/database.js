@@ -3,14 +3,35 @@ import pg from 'pg';
 const { Pool } = pg;
 
 // ==================== DATABASE CONNECTION ====================
-// Use DATABASE_URL from Railway PostgreSQL plugin, fallback to individual params
+// v5.2.1 SSL FIX:
+//   The previous heuristic only disabled SSL when DATABASE_URL contained
+//   'localhost' or '.railway.internal'. In the production VPS Docker compose
+//   the URL uses the service-name host (e.g. postgres://altyn@postgres:5432/…)
+//   which matched neither, so the pool tried SSL against a non-SSL local
+//   Postgres and the app crashed with:
+//     Error: The server does not support SSL connections
+//
+//   New rule (opt-in instead of opt-out):
+//     SSL is ON only when one of these is true
+//       - PGSSLMODE=require               (standard libpq env var)
+//       - DB_SSL=true / DATABASE_SSL=true (boolean overrides)
+//       - DATABASE_URL contains sslmode=require
+//     Otherwise SSL is OFF — which is correct for local docker postgres,
+//     localhost dev and Railway internal connections.
+function resolveSsl() {
+  const url = process.env.DATABASE_URL || '';
+  const mode = String(process.env.PGSSLMODE || '').toLowerCase();
+  const dbSsl = String(process.env.DB_SSL || process.env.DATABASE_SSL || '').toLowerCase();
+  if (mode === 'disable' || dbSsl === 'false' || dbSsl === '0' || dbSsl === 'no') return false;
+  if (mode === 'require' || mode === 'verify-ca' || mode === 'verify-full') return { rejectUnauthorized: false };
+  if (dbSsl === 'true' || dbSsl === '1' || dbSsl === 'yes') return { rejectUnauthorized: false };
+  if (/[?&]sslmode=require\b/i.test(url)) return { rejectUnauthorized: false };
+  return false;
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: (process.env.DATABASE_URL && 
-        !process.env.DATABASE_URL.includes('localhost') && 
-        !process.env.DATABASE_URL.includes('.railway.internal'))
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl: resolveSsl(),
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000
