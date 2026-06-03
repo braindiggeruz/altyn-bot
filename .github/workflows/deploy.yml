@@ -1,0 +1,66 @@
+name: Deploy to VPS
+
+# Auto-deploy the bot to production when main changes.
+#
+# One-time setup (owner action):
+#   GitHub repo Settings → Secrets and variables → Actions → New repository secret
+#     VPS_SSH_KEY        — paste the contents of /app/altyn-ops/ssh/altyn_deploy_ed25519
+#                          (private key, OpenSSH format, BEGIN OPENSSH PRIVATE KEY)
+#     VPS_HOST           — 139.162.188.102
+#     VPS_USER           — root
+#     VPS_KNOWN_HOST     — run on VPS:  ssh-keyscan -t ed25519 139.162.188.102
+#                          (paste the single line that comes out)
+#
+# After secrets exist, every push to `main` (e.g. PR merge) triggers `deploy.sh`
+# on the VPS with no downtime longer than a container restart.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.VPS_KNOWN_HOST }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Run deploy.sh on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "${VPS_USER}@${VPS_HOST}" '
+            set -euo pipefail
+            cd /srv/altyn/altyn-bot 2>/dev/null || cd /srv/altyn
+            if [ -f /srv/altyn/altyn-bot/deploy.sh ]; then
+              bash /srv/altyn/altyn-bot/deploy.sh
+            else
+              # Fallback if the repo lives elsewhere
+              cd /srv/altyn/altyn-bot && git fetch origin main && git reset --hard origin/main
+              cd /srv/altyn && docker compose build app && docker compose up -d app
+              sleep 8 && curl -fsS https://bot.altyn-therapy.uz/health
+            fi
+          '
+
+      - name: Verify /health reports 5.2.0
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            V=$(curl -fsS -m 5 https://bot.altyn-therapy.uz/health | python3 -c "import json,sys;print(json.load(sys.stdin).get('version',''))" || echo "")
+            echo "attempt $i: version=$V"
+            if [[ "$V" =~ ^5\.2 ]]; then
+              echo "::notice::Bot deployed, version=$V"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Bot did not report version 5.2.x within 60s"
+          exit 1
