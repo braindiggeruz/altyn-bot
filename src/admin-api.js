@@ -602,6 +602,98 @@ router.get('/analytics/sources', authMiddleware, async (req, res) => {
   }
 });
 
+// v5.2: creative-level breakdown.
+// Returns rows for every (source, creative) combo over the last <days> days
+// (default 7) with leads / quiz_completed / bookings / direct_clicks / CR.
+// Used by admin UI to compare which IG/Google/site creative actually converts.
+router.get('/analytics/creatives', authMiddleware, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days || '7', 10) || 7, 1), 90);
+    const result = await pool.query(`
+      SELECT
+        COALESCE(source, 'organic')      AS source,
+        COALESCE(creative, '-')          AS creative,
+        COUNT(*)                                                              AS leads,
+        COUNT(*) FILTER (WHERE scenario IS NOT NULL)                          AS quiz_completed,
+        COUNT(*) FILTER (WHERE lead_status = 'booking_submitted')             AS bookings,
+        COUNT(*) FILTER (WHERE direct_owner_clicked_at IS NOT NULL)           AS direct_clicks,
+        ROUND(
+          (COUNT(*) FILTER (WHERE lead_status = 'booking_submitted'))::numeric
+          / NULLIF(COUNT(*),0) * 100, 1
+        ) AS cr_booking_pct
+      FROM users
+      WHERE created_at > NOW() - ($1 || ' days')::interval
+      GROUP BY 1, 2
+      ORDER BY bookings DESC NULLS LAST, direct_clicks DESC, leads DESC
+    `, [String(days)]);
+    res.json({ days, rows: result.rows });
+  } catch (err) {
+    console.error('Analytics creatives error:', err.message);
+    res.status(500).json({ error: 'Failed to load creatives' });
+  }
+});
+
+// v5.2: leads breakdown — quick funnel snapshot grouped by lead_status.
+router.get('/leads/breakdown', authMiddleware, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days || '30', 10) || 30, 1), 365);
+    const byStatus = await pool.query(`
+      SELECT COALESCE(lead_status,'new') AS lead_status, COUNT(*) AS count
+      FROM users
+      WHERE created_at > NOW() - ($1 || ' days')::interval
+      GROUP BY 1
+      ORDER BY count DESC
+    `, [String(days)]);
+    const bySource = await pool.query(`
+      SELECT COALESCE(source,'organic') AS source,
+             COUNT(*) AS leads,
+             COUNT(*) FILTER (WHERE lead_status='telegram_started')           AS started,
+             COUNT(*) FILTER (WHERE lead_status='quiz_started')               AS quiz_started,
+             COUNT(*) FILTER (WHERE lead_status='quiz_completed')             AS quiz_done,
+             COUNT(*) FILTER (WHERE lead_status='booking_intent')             AS booking_intent,
+             COUNT(*) FILTER (WHERE lead_status='booking_submitted')          AS bookings,
+             COUNT(*) FILTER (WHERE direct_owner_clicked_at IS NOT NULL)      AS direct_clicks
+      FROM users
+      WHERE created_at > NOW() - ($1 || ' days')::interval
+      GROUP BY 1
+      ORDER BY bookings DESC, leads DESC
+    `, [String(days)]);
+    res.json({ days, by_status: byStatus.rows, by_source: bySource.rows });
+  } catch (err) {
+    console.error('Leads breakdown error:', err.message);
+    res.status(500).json({ error: 'Failed to load leads breakdown' });
+  }
+});
+
+// v5.2: thin alias `/leads` -> the same payload as `/users` filtered to
+// non-zero attribution (start_param OR scenario OR booking submitted).
+// Lets the admin UI keep a tab labelled "Lead" without re-implementing the
+// users grid.
+router.get('/leads', authMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '200', 10) || 200, 1), 1000);
+    const result = await pool.query(`
+      SELECT telegram_id, username, first_name, last_name,
+             start_param, source, creative, lead_status,
+             scenario, booking_status,
+             telegram_started_at, booking_intent_at, booking_submitted_at,
+             owner_notified_at, direct_owner_clicked_at,
+             created_at, last_active
+      FROM users
+      WHERE start_param IS NOT NULL
+         OR scenario IS NOT NULL
+         OR lead_status IS NOT NULL
+         OR booking_status IN ('booked','confirmed','completed')
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+    res.json({ count: result.rows.length, rows: result.rows });
+  } catch (err) {
+    console.error('Leads error:', err.message);
+    res.status(500).json({ error: 'Failed to load leads' });
+  }
+});
+
 router.get('/analytics/scenarios', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(`
