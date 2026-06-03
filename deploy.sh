@@ -15,14 +15,20 @@ set -euo pipefail
 cd /srv/altyn
 
 echo ">> 1/6  Pull latest bot code"
-# If the bot's git working tree is the altyn-bot repo:
-if [ -d /srv/altyn/altyn-bot/.git ]; then
-  cd /srv/altyn/altyn-bot
+# Try the most common repo locations.
+REPO_DIR=""
+for d in /srv/altyn/altyn-bot /srv/altyn/bot /srv/altyn; do
+  if [ -d "$d/.git" ]; then REPO_DIR="$d"; break; fi
+done
+if [ -n "$REPO_DIR" ]; then
+  echo "   repo at $REPO_DIR"
+  cd "$REPO_DIR"
   git fetch origin main
   git reset --hard origin/main
   cd /srv/altyn
 else
-  echo "   (no /srv/altyn/altyn-bot/.git — assuming docker-compose builds from a different path; rebuild will fetch fresh image)"
+  echo "   !! no git working tree found under /srv/altyn/{altyn-bot,bot,.}"
+  echo "   docker compose build below will use whatever build context is in compose file"
 fi
 
 echo ">> 2/6  Backup the database before migration"
@@ -32,8 +38,11 @@ docker compose exec -T postgres pg_dump -U altyn -d altyn | gzip > "/srv/altyn/b
 ls -lh "/srv/altyn/backups/altyn-pre-v52-${TS}.dump.gz"
 
 echo ">> 3/6  Rebuild and restart the bot container"
-docker compose build app
+# Use --no-cache only if a previous build of the same SHA may be cached stale.
+docker compose build app || docker compose build --no-cache app
 docker compose up -d app
+# Optional: prune dangling old images so disk stays sane on the nanode.
+docker image prune -f --filter "until=24h" >/dev/null 2>&1 || true
 
 echo ">> 4/6  Wait for /health to report version 5.2.0"
 for i in 1 2 3 4 5 6 7 8 9 10; do
