@@ -194,6 +194,70 @@ export async function initDatabase() {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NOW()`,
+      // ==================================================================
+      // ALTYN Mirror integration (Phase 2.1+). Idempotent — these tables
+      // already exist on production (created out-of-band). We keep the
+      // CREATE TABLE IF NOT EXISTS here so a fresh dev DB still boots, and
+      // the ALTER ADD COLUMN IF NOT EXISTS lines keep older schemas in sync.
+      // No data is modified. Status state-machine lives in src/mirror-api.js.
+      // ==================================================================
+      `CREATE TABLE IF NOT EXISTS mirror_sessions (
+        id                       SERIAL PRIMARY KEY,
+        session_id               TEXT UNIQUE NOT NULL,
+        am_token                 TEXT UNIQUE,
+        telegram_id              BIGINT,
+        result_type              TEXT,
+        secondary_result         TEXT,
+        lang                     TEXT,
+        source                   TEXT,
+        utm_source               TEXT,
+        utm_campaign             TEXT,
+        utm_content              TEXT,
+        utm_term                 TEXT,
+        fbclid_present           BOOLEAN DEFAULT FALSE,
+        landing_path             TEXT,
+        first_page_path          TEXT,
+        last_page_path           TEXT,
+        started_at               TIMESTAMPTZ,
+        completed_at             TIMESTAMPTZ,
+        owner_direct_clicked_at  TIMESTAMPTZ,
+        bot_intent_clicked_at    TIMESTAMPTZ,
+        linked_at                TIMESTAMPTZ,
+        status                   TEXT DEFAULT 'started',
+        created_at               TIMESTAMPTZ DEFAULT NOW(),
+        updated_at               TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS mirror_events (
+        id                        SERIAL PRIMARY KEY,
+        session_id                TEXT NOT NULL,
+        event_id                  TEXT UNIQUE NOT NULL,
+        event_name                TEXT NOT NULL,
+        result_type               TEXT,
+        secondary_result          TEXT,
+        answers                   JSONB,
+        payload                   JSONB,
+        lang                      TEXT,
+        source                    TEXT,
+        utm_source                TEXT,
+        utm_campaign              TEXT,
+        utm_content               TEXT,
+        utm_term                  TEXT,
+        fbclid_present            BOOLEAN DEFAULT FALSE,
+        page_path                 TEXT,
+        landing_path              TEXT,
+        from_cta                  TEXT,
+        prepared_message_present  BOOLEAN DEFAULT FALSE,
+        user_agent_hash           TEXT,
+        ip_hash                   TEXT,
+        created_at                TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_mirror_sessions_session_id  ON mirror_sessions (session_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_mirror_sessions_am_token    ON mirror_sessions (am_token)`,
+      `CREATE INDEX IF NOT EXISTS idx_mirror_sessions_telegram_id ON mirror_sessions (telegram_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_mirror_sessions_status      ON mirror_sessions (status)`,
+      `CREATE INDEX IF NOT EXISTS idx_mirror_sessions_created_at  ON mirror_sessions (created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_mirror_events_session_id    ON mirror_events (session_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_mirror_events_event_name    ON mirror_events (event_name, created_at)`,
     ];
     for (const mig of migrations) {
       await client.query(mig).catch(() => {});

@@ -15,6 +15,7 @@ import {
   pool
 } from './database.js';
 import { sendBroadcast, sendBroadcastToChat } from './bot.js';
+import { registerMirrorAdminRoutes } from './mirror-api.js';
 
 const router = express.Router();
 // FIX v4.7.0: Use stable fallback secret instead of random (tokens survive restarts)
@@ -789,5 +790,12 @@ router.post('/login', (req, res, next) => {
   req.url = '/auth/login';
   router.handle(req, res, next);
 });
+
+// ALTYN Mirror admin routes — JWT-protected; mounted via shared adminRouter.
+// Endpoints:
+//   GET /api/admin/mirror/sessions
+//   GET /api/admin/mirror/sessions/:session_id
+//   GET /api/admin/mirror/stats
+registerMirrorAdminRoutes(router, authMiddleware);
 
 export default router;

@@ -196,6 +196,7 @@
       <div class="nav-item" data-page="referrals"><i class="fas fa-gift"></i> Рефералы</div>
       <div class="nav-item" data-page="ab-testing"><i class="fas fa-flask"></i> A/B Тесты</div>
       <div class="nav-section">Инсайты</div>
+      <div class="nav-item" data-page="mirror" data-testid="nav-mirror-sessions"><i class="fas fa-mirror"></i> Mirror Sessions</div>
       <div class="nav-item" data-page="heatmap"><i class="fas fa-fire"></i> Тепловая карта</div>
       <div class="nav-item" data-page="cohorts"><i class="fas fa-layer-group"></i> Когорты</div>
       <div class="nav-item" data-page="exit-survey"><i class="fas fa-door-open"></i> Exit-опрос</div>
@@ -308,6 +309,43 @@
       <div class="stats-grid" id="exit-stats"></div>
       <div class="panel"><div class="panel-header"><span class="panel-title">Причины отказа</span></div><div class="chart-container"><canvas id="chart-exit"></canvas></div></div>
     </section>
+
+    <!-- MIRROR SESSIONS (Phase 2.4) -->
+    <section class="section" id="page-mirror">
+      <div class="page-header">
+        <div><h2>🪞 Mirror Sessions</h2><p style="color:var(--text3);font-size:13px;margin-top:4px">ALTYN Mirror sessions, completion, owner-direct intent, bot linking. Read-only.</p></div>
+        <div style="display:flex;gap:8px"><span id="mirror-ingest-flag" data-testid="mirror-ingest-flag" style="font-size:11px;color:var(--text3);align-self:center"></span><button class="btn btn-outline" data-testid="mirror-refresh-btn" onclick="loadMirror()"><i class="fas fa-sync-alt"></i> Обновить</button></div>
+      </div>
+      <div class="stats-grid" id="mirror-stats" data-testid="mirror-stats"></div>
+      <div class="panel" style="margin-bottom:16px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select class="form-select" style="width:170px" id="mirror-filter-status" data-testid="mirror-filter-status" onchange="loadMirror()">
+            <option value="">Все статусы</option>
+            <option value="started">started</option>
+            <option value="linked">linked</option>
+            <option value="bot_intent">bot_intent</option>
+            <option value="owner_intent">owner_intent</option>
+            <option value="completed">completed</option>
+          </select>
+          <select class="form-select" style="width:170px" id="mirror-filter-result" data-testid="mirror-filter-result" onchange="loadMirror()">
+            <option value="">Все результаты</option>
+            <option value="hot_cold">hot_cold</option>
+            <option value="clarity">clarity</option>
+            <option value="savior">savior</option>
+            <option value="strong">strong</option>
+            <option value="distant">distant</option>
+            <option value="no_intimacy">no_intimacy</option>
+          </select>
+          <input class="form-input" style="width:170px" placeholder="source / utm_source" id="mirror-filter-source" data-testid="mirror-filter-source" onkeyup="if(event.key==='Enter')loadMirror()">
+          <select class="form-select" style="width:170px" id="mirror-filter-linked" data-testid="mirror-filter-linked" onchange="loadMirror()">
+            <option value="">Любая связь TG</option>
+            <option value="yes">С telegram_id</option>
+            <option value="no">Без telegram_id</option>
+          </select>
+        </div>
+      </div>
+      <div class="panel"><div id="mirror-table" data-testid="mirror-table"></div></div>
+    </section>
   </main>
 
   <!-- MODALS -->
@@ -410,7 +448,7 @@ function setupNav(){
       document.getElementById(`page-${p}`).classList.add('active');
       document.querySelector('.sidebar').classList.remove('open');
       const L={dashboard:loadDashboard,funnel:loadFunnel,analytics:loadAnalytics,users:loadUsers,broadcasts:loadBroadcasts,
-        templates:loadTemplates,utm:loadUtmLinks,referrals:loadReferrals,heatmap:loadHeatmap,cohorts:loadCohorts,'exit-survey':loadExitSurvey,'ab-testing':loadAbTests};
+        templates:loadTemplates,utm:loadUtmLinks,referrals:loadReferrals,heatmap:loadHeatmap,cohorts:loadCohorts,'exit-survey':loadExitSurvey,'ab-testing':loadAbTests,mirror:loadMirror};
       if(L[p])L[p]();
     });
   });
@@ -763,6 +801,67 @@ function copyText(t){
     const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);
     a.select();document.execCommand('copy');document.body.removeChild(a);toast('Скопировано!');
   });
+}
+
+// ============================================================
+// Mirror Sessions (Phase 2.4) — read-only admin view.
+// ============================================================
+async function loadMirror(){
+  const params=new URLSearchParams();
+  const st=document.getElementById('mirror-filter-status').value;
+  const rt=document.getElementById('mirror-filter-result').value;
+  const sr=document.getElementById('mirror-filter-source').value.trim();
+  const lk=document.getElementById('mirror-filter-linked').value;
+  if(st)params.set('status',st);
+  if(rt)params.set('result_type',rt);
+  if(sr)params.set('source',sr);
+  if(lk)params.set('linked',lk);
+  params.set('limit','100');
+
+  const [stats,list]=await Promise.all([
+    api('/admin/mirror/stats?days=30'),
+    api(`/admin/mirror/sessions?${params.toString()}`)
+  ]);
+  const flagEl=document.getElementById('mirror-ingest-flag');
+  if(stats){
+    const o=stats.overall||{};
+    flagEl.textContent=`MIRROR_INGEST_ENABLED = ${stats.ingest_enabled?'true':'false'}`;
+    flagEl.style.color=stats.ingest_enabled?'var(--green)':'var(--text3)';
+    document.getElementById('mirror-stats').innerHTML=`
+      <div class="stat-card" data-testid="mirror-stat-sessions"><div class="label">Sessions (30д)</div><div class="value">${o.sessions||0}</div></div>
+      <div class="stat-card" data-testid="mirror-stat-completed"><div class="label">Completed</div><div class="value" style="color:var(--green)">${o.completed||0}</div></div>
+      <div class="stat-card" data-testid="mirror-stat-owner"><div class="label">Owner intent</div><div class="value" style="color:var(--gold)">${o.owner_intent||0}</div></div>
+      <div class="stat-card" data-testid="mirror-stat-bot"><div class="label">Bot intent</div><div class="value" style="color:var(--blue)">${o.bot_intent||0}</div></div>
+      <div class="stat-card" data-testid="mirror-stat-linked"><div class="label">Linked Telegram</div><div class="value" style="color:var(--purple)">${o.linked_telegram||0}</div></div>`;
+  }else{
+    flagEl.textContent='MIRROR_INGEST stats unavailable';
+    document.getElementById('mirror-stats').innerHTML='';
+  }
+  if(!list){document.getElementById('mirror-table').innerHTML='<p style="text-align:center;color:var(--text3);padding:40px">Нет данных</p>';return;}
+  if(!list.rows||list.rows.length===0){
+    document.getElementById('mirror-table').innerHTML=`<p style="text-align:center;color:var(--text3);padding:40px">Сессий нет${list.total!==undefined?` (total: ${list.total})`:''}.</p>`;
+    return;
+  }
+  const statusColor={started:'tag-blue',linked:'tag-purple',bot_intent:'tag-blue',owner_intent:'tag-gold',completed:'tag-green'};
+  const tsShort=v=>v?String(v).replace('T',' ').slice(0,16):'—';
+  document.getElementById('mirror-table').innerHTML=`<div style="margin-bottom:8px;font-size:12px;color:var(--text3)">Всего: ${list.total}</div>
+    <table data-testid="mirror-sessions-table"><thead><tr>
+      <th>Session</th><th>Status</th><th>Result</th><th>Source / UTM</th>
+      <th>Started</th><th>Completed</th><th>Owner click</th><th>Bot click</th>
+      <th>TG</th><th>Events</th>
+    </tr></thead>
+    <tbody>${list.rows.map(r=>`<tr data-testid="mirror-row-${r.session_id}">
+      <td><span class="copy-link" onclick="copyText('${r.session_id}')" title="${r.session_id}">${(r.session_id||'').slice(-12)}</span>${r.am_token?`<div style="font-size:10px;color:var(--text3);margin-top:2px">am: ${(r.am_token||'').slice(-10)}</div>`:''}</td>
+      <td><span class="tag ${statusColor[r.status]||''}">${r.status||'—'}</span></td>
+      <td>${r.result_type?`<span class="tag tag-purple">${r.result_type}</span>`:'—'}${r.secondary_result&&r.secondary_result!==r.result_type?`<div style="font-size:10px;color:var(--text3);margin-top:2px">${r.secondary_result}</div>`:''}</td>
+      <td style="font-size:11px;color:var(--text2)">${r.source||r.utm_source||'direct'}<div style="font-size:10px;color:var(--text3)">${r.utm_campaign||''} ${r.utm_content?'/ '+r.utm_content:''}</div></td>
+      <td style="font-size:11px;color:var(--text3)">${tsShort(r.started_at)}</td>
+      <td style="font-size:11px;color:${r.completed_at?'var(--green)':'var(--text3)'}">${tsShort(r.completed_at)}</td>
+      <td style="font-size:11px;color:${r.owner_direct_clicked_at?'var(--gold)':'var(--text3)'}">${tsShort(r.owner_direct_clicked_at)}</td>
+      <td style="font-size:11px;color:${r.bot_intent_clicked_at?'var(--blue)':'var(--text3)'}">${tsShort(r.bot_intent_clicked_at)}</td>
+      <td>${r.telegram_id?`<span class="tag tag-green">${r.telegram_id}</span>`:'—'}</td>
+      <td style="text-align:center">${r.event_count||0}</td>
+    </tr>`).join('')}</tbody></table>`;
 }
 </script>
 </body>

@@ -9,6 +9,7 @@ import { initDatabase } from './database.js';
 import { initBot, sendWarmupMessages, sendReminders, sendBroadcast, sendTornadoReactivation, setBot, runOnce, notifyAdmin } from './bot.js';
 import { TORNADO_MESSAGES } from './content.js';
 import adminRouter from './admin-api.js';
+import { mirrorIngestRouter } from './mirror-api.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -87,6 +88,10 @@ async function startApp() {
     setBot(botInstance);
 
     // API routes
+    // ALTYN Mirror ingest endpoint uses Bearer auth (MIRROR_INGEST_TOKEN), NOT
+    // the admin JWT — so it must be mounted BEFORE adminRouter to bypass the
+    // helmet/CORS-side admin middleware chain.
+    app.use('/api/mirror', mirrorIngestRouter);
     app.use('/api', adminRouter);
 
     // Debug endpoint - last errors

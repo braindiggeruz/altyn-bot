@@ -7,6 +7,7 @@ import {
   getAllUsers, getUsersDueForWarmup, getScheduledBroadcasts, updateBroadcast,
   getBroadcastUsers, pool
 } from './database.js';
+import { linkMirrorSessionToTelegram } from './mirror-api.js';
 import {
   WELCOME_TEXT, WELCOME_IMAGE, QUIZ_QUESTIONS, SCENARIO_RESULTS,
   RESULT_IMAGES, WARMUP_MESSAGES, FOLLOWUP_MESSAGES, BOOKING_CONFIRM_TEXT,
@@ -387,7 +388,12 @@ export function initBot(token, app) {
       campaign: null,
       adset: null,
       ad_id: null,
-      referrer_id: null
+      referrer_id: null,
+      // Phase 2.5 — ALTYN Mirror deeplink. When /start am_<token> arrives,
+      // we keep source attribution intact (organic / existing source) and
+      // surface the token so the calling handler can link it to a mirror
+      // session via mirror-api.js → linkMirrorSessionToTelegram().
+      am_token: null
     };
     if (!raw) return out;
     const sp = String(raw).trim().replace(/^[^A-Za-z0-9_-]+/, '').slice(0, 64);
@@ -413,6 +419,14 @@ export function initBot(token, app) {
       const parts = sp.slice(4).split('_');
       out.source = parts[0] || 'site';
       out.creative = parts.slice(1).join('_') || null;
+      return out;
+    }
+    // ALTYN Mirror deep link (Phase 2.5). Format: am_<sessionId>.
+    // Source is 'mirror' so attribution stays clean (was 'am' garbage before).
+    if (sp.startsWith('am_')) {
+      out.source = 'mirror';
+      out.am_token = sp; // keep the full 'am_<id>' for downstream linking
+      out.creative = sp.slice(3) || null;
       return out;
     }
     out.source = sp;
@@ -455,7 +469,7 @@ export function initBot(token, app) {
     console.log(`📩 /start received from ${chatId} (param: '${param}')`);
 
     const parsed = parseStartParam(param);
-    const { start_param, source, creative, campaign, adset, ad_id, referrer_id } = parsed;
+    const { start_param, source, creative, campaign, adset, ad_id, referrer_id, am_token } = parsed;
     const hot = isHotStart(start_param);
 
     // utm_* keeps backward compatibility with old admin reports.
@@ -532,6 +546,24 @@ export function initBot(token, app) {
         }
       } catch (e) {
         console.error('Referral tracking error:', e.message);
+      }
+    }
+
+    // Phase 2.5 — ALTYN Mirror deep-link linking. When /start am_<token>
+    // arrives, link the mirror session to this Telegram user. We do NOT
+    // alter the users row beyond what /start already does (no schema change
+    // required); the join is via mirror_sessions.telegram_id and can be
+    // surfaced from admin by joining on telegram_id.
+    if (am_token) {
+      try {
+        const linkRes = await linkMirrorSessionToTelegram(am_token, chatId);
+        if (linkRes && linkRes.ok) {
+          await logEvent('MirrorLinked', chatId, { am_token, session_id: linkRes.session_id });
+        } else {
+          await logEvent('MirrorLinkMiss', chatId, { am_token, reason: linkRes?.error || 'unknown' });
+        }
+      } catch (e) {
+        console.error('Mirror link error:', e.message);
       }
     }
 
