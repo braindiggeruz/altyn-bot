@@ -47,11 +47,21 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "${VPS_USER}@${VPS_HOST}" '
             set -euo pipefail
-            cd /srv/altyn/altyn-bot 2>/dev/null || cd /srv/altyn
-            if [ -f /srv/altyn/altyn-bot/deploy.sh ]; then
+            # Find deploy.sh — production layout has source rsynced directly into /srv/altyn,
+            # not into a nested /srv/altyn/altyn-bot/. Fall back to inline build if neither exists.
+            if [ -f /srv/altyn/deploy.sh ]; then
+              bash /srv/altyn/deploy.sh
+            elif [ -f /srv/altyn/altyn-bot/deploy.sh ]; then
               bash /srv/altyn/altyn-bot/deploy.sh
             else
-              cd /srv/altyn/altyn-bot && git fetch origin main && git reset --hard origin/main
+              # Fresh clone + rsync fallback (matches deploy.sh logic).
+              rm -rf /tmp/altyn-bot-main
+              git clone --depth=1 https://github.com/braindiggeruz/altyn-bot.git /tmp/altyn-bot-main
+              rsync -a --delete-after \
+                --exclude=".git" --exclude=".env" --exclude=".env.*" \
+                --exclude="backups" --exclude="docker-compose.yml" \
+                --exclude="docker-compose.yaml" --exclude="node_modules" \
+                /tmp/altyn-bot-main/ /srv/altyn/
               cd /srv/altyn && docker compose build app && docker compose up -d app
               sleep 8 && curl -fsS https://bot.altyn-therapy.uz/health
             fi
